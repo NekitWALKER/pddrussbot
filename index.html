@@ -1,0 +1,183 @@
+<!doctype html>
+ <html lang="ru">
+ <head>
+   <meta charset="utf-8" />
+   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+   <title>ПДД ДУЭЛИ</title>
+   <meta name="description" content="Реальные билеты ПДД РФ: дуэли, темы, разметка и штрафы." />
+   <link rel="preconnect" href="https://fonts.googleapis.com" />
+   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="preload" href="style.css?v=66" as="style" />
+  <link rel="stylesheet" href="style.css?v=66" />
+  <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
+ </head>
+ 
+ <body>
+ 
+   <noscript>
+     <style>
+       .noscript-warning {
+         margin: 16px auto;
+         max-width: 680px;
+         background: #fff6f6;
+         border: 1px solid #f5c2c2;
+         padding: 16px;
+         border-radius: 8px;
+         text-align: center;
+       }
+     </style>
+     <div class="noscript-warning">
+       <p>⚠️ Для работы приложения необходим JavaScript. Пожалуйста, включите его в настройках браузера.</p>
+     </div>
+   </noscript>
+ 
+   <div class="app">
+     <!-- Шапка -->
+     <header class="app-header">
+       <div class="header-online">
+         <span class="online-indicator"></span>
+         <span id="online-count">0</span>
+       </div>
+       <div class="header-title">
+         <h1>ПДД ДУЭЛИ</h1>
+         <svg class="header-checkmark" width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+           <circle cx="9" cy="9" r="8.5" fill="rgba(0, 149, 246, 0.7)" stroke="rgba(0, 149, 246, 0.9)" stroke-width="0.5"/>
+           <path d="M6.5 9L8 10.5L11.5 7" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+         </svg>
+       </div>
+       <button class="header-settings" id="settings-btn" aria-label="Настройки">⚙</button>
+     </header>
+
+     <!-- Контент по табам -->
+     <div class="app-content">
+       <!-- Главная -->
+       <section id="home-tab" class="tab-content active">
+         <!-- Статистика -->
+         <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-value" id="games-played">0</div>
+            <div class="stat-label">игр сыграно</div>
+          </div>
+          <div class="stat-card stat-card-large" data-action="top" style="cursor: pointer;">
+            <div class="stat-value" id="top-place">-</div>
+            <div class="stat-label">место в топе</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="experience-level">1</div>
+            <div class="stat-label">опыт / уровень</div>
+          </div>
+         </div>
+
+         <!-- Кнопки навигации -->
+         <div class="nav-buttons">
+           <button class="nav-btn" data-action="tickets">🎫 БИЛЕТЫ</button>
+           <div class="nav-buttons-grid">
+             <button class="nav-btn" data-action="topics">📚 Темы</button>
+             <button class="nav-btn" data-action="favorites">⭐ Избранное</button>
+             <button class="nav-btn nav-btn-primary" data-action="duels" style="background: var(--gradient-hero); color: white; border: none; box-shadow: var(--shadow-md); font-weight: 700;">⚔ Дуэли</button>
+           </div>
+         </div>
+       </section>
+
+       <!-- Правила -->
+       <section id="rules-tab" class="tab-content">
+        <div class="rules-content">
+          <button class="nav-btn" data-action="penalties">💰 Штрафы</button>
+          <button class="nav-btn" data-action="markup">🚦 Разметка</button>
+        </div>
+       </section>
+
+       <!-- Один экран для дуэлей/вопросов -->
+       <section id="screen" class="screen screen--hidden" aria-live="polite"></section>
+     </div>
+
+     <!-- Нижняя навигация -->
+     <nav class="bottom-nav">
+       <button class="bottom-nav-item active" data-tab="home">
+         <span class="nav-icon">🏠</span>
+         <span class="nav-label">Главная</span>
+       </button>
+       <button class="bottom-nav-item" data-tab="rules">
+         <span class="nav-icon">📖</span>
+         <span class="nav-label">Правила</span>
+       </button>
+     </nav>
+   </div>
+ 
+  <div id="toast" class="toast-wrap"></div>
+  
+  <!-- Экран регистрации - Первый экран -->
+  <div id="registration-screen-1" class="registration-screen">
+    <div class="registration-card">
+      <div class="registration-logo">
+        <svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="40" cy="40" r="38" fill="#000000" stroke="#ffffff" stroke-width="4"/>
+          <!-- Машинка -->
+          <rect x="20" y="35" width="40" height="20" rx="4" fill="#ffffff"/>
+          <rect x="25" y="30" width="30" height="8" rx="2" fill="#ffffff"/>
+          <circle cx="30" cy="58" r="6" fill="#ffffff"/>
+          <circle cx="50" cy="58" r="6" fill="#ffffff"/>
+          <rect x="28" y="40" width="24" height="10" rx="2" fill="#000000"/>
+        </svg>
+      </div>
+      <h2 class="registration-app-name">ДУЭЛИ ПДД</h2>
+      <p class="registration-description">Сражайся против реальных людей</p>
+      <p class="registration-description">в знаниях правил дорожного</p>
+      <p class="registration-description">движения.</p>
+      <button class="registration-btn-black" id="registration-start-btn">Создать профиль</button>
+    </div>
+  </div>
+  
+  <!-- Экран регистрации - Второй экран (форма) -->
+  <div id="registration-screen-2" class="registration-screen hidden">
+    <div class="registration-form-container">
+      <div class="registration-form-header">
+        <div class="registration-form-header-left">
+          <span class="registration-form-app-name">ДУЭЛИ ПДД</span>
+          <svg class="registration-checkmark" width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="9" cy="9" r="8.5" fill="#0095f6" stroke="#0095f6" stroke-width="0.5"/>
+            <path d="M6.5 9L8 10.5L11.5 7" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="registration-form-header-right">
+          <span class="registration-form-close" id="registration-close-btn">✕</span>
+        </div>
+      </div>
+      <div class="registration-progress-bar">
+        <div class="registration-progress-line active"></div>
+        <div class="registration-progress-line"></div>
+        <div class="registration-progress-line"></div>
+      </div>
+      
+      <div class="registration-form-content">
+        <h3 class="registration-form-title">Создание профиля</h3>
+        
+        <!-- Аватарка (автоматически из Telegram) -->
+        <div class="registration-avatar-section">
+          <div class="registration-avatar-preview" id="avatar-preview">
+            <svg width="60" height="60" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="30" cy="30" r="30" fill="#E5E5E5"/>
+              <path d="M30 20C33.3137 20 36 22.6863 36 26C36 29.3137 33.3137 32 30 32C26.6863 32 24 29.3137 24 26C24 22.6863 26.6863 20 30 20Z" fill="#999999"/>
+              <path d="M20 45C20 38.3726 25.3726 33 32 33H28C34.6274 33 40 38.3726 40 45V47H20V45Z" fill="#999999"/>
+            </svg>
+          </div>
+        </div>
+        
+        <!-- Псевдоним -->
+        <form id="registration-form" class="registration-form">
+          <div class="registration-field">
+            <input type="text" id="nickname-input" class="registration-input" placeholder="Псевдоним" maxlength="10">
+          </div>
+          
+          <div id="nickname-suggestions" class="registration-suggestions hidden"></div>
+          
+                <button type="button" class="registration-btn-continue" id="registration-continue-btn" onclick="if(window.handleRegistrationSubmit) window.handleRegistrationSubmit(event); return false;">Продолжить</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  
+    <script src="script.js?v=93"></script>
+ </body>
+ </html>

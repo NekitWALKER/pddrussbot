@@ -1,0 +1,4064 @@
+ /* =======================
+    Telegram + Глобальное состояние
+ ======================= */
+ // Сразу убираем загрузчик, если он есть
+if (document.body) {
+  document.body.classList.remove("is-loading");
+  const loader = document.getElementById("loader");
+  if (loader) loader.remove();
+}
+
+ const TG = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+try {
+  if (TG && typeof TG.ready === "function") TG.ready();
+  if (TG && typeof TG.expand === "function") TG.expand();
+} catch(_) {}
+
+// Отладочная информация для проверки Telegram API
+if (typeof console !== 'undefined') {
+  console.log("Telegram WebApp доступен:", !!TG);
+  console.log("window.Telegram доступен:", !!window.Telegram);
+  if (TG) {
+    console.log("TG.initDataUnsafe:", TG.initDataUnsafe);
+    console.log("TG.initData:", TG.initData);
+  }
+}
+
+// Получаем ID пользователя Telegram
+function getTelegramUserId() {
+  try {
+    // Пробуем разные способы получения ID
+    if (TG?.initDataUnsafe?.user?.id) {
+      return TG.initDataUnsafe.user.id;
+    }
+    if (TG?.initData?.user?.id) {
+      return TG.initData.user.id;
+    }
+    // Пробуем через window напрямую
+    if (window.Telegram?.WebApp?.initDataUnsafe?.user?.id) {
+      return window.Telegram.WebApp.initDataUnsafe.user.id;
+    }
+    if (window.Telegram?.WebApp?.initData?.user?.id) {
+      return window.Telegram.WebApp.initData.user.id;
+    }
+    return null;
+  } catch(e) {
+    console.warn("Ошибка получения Telegram ID:", e);
+    return null;
+  }
+}
+
+// Получаем данные пользователя из Telegram
+function getTelegramUser() {
+  try {
+    console.log("🔍 getTelegramUser() вызвана");
+    console.log("🔍 TG объект:", TG);
+    console.log("🔍 TG?.initDataUnsafe:", TG?.initDataUnsafe);
+    console.log("🔍 TG?.initData:", TG?.initData);
+    
+    const user = TG?.initDataUnsafe?.user || TG?.initData?.user || null;
+    console.log("🔍 Найденный user объект:", user);
+    
+    if (user) {
+      const userData = {
+        id: user.id,
+        username: user.username || `User${user.id}`,
+        firstName: user.first_name || '',
+        lastName: user.last_name || '',
+        photoUrl: user.photo_url || null
+      };
+      console.log("✅ getTelegramUser() вернула данные:", userData);
+      return userData;
+    }
+    
+    console.warn("⚠️ getTelegramUser() не нашла данные пользователя");
+    return null;
+  } catch(e) {
+    console.error("❌ Ошибка в getTelegramUser():", e);
+    return null;
+  }
+}
+
+// Получаем ключ для localStorage с учетом ID пользователя
+function getStorageKey(baseKey) {
+  const userId = getTelegramUserId();
+  if (userId) {
+    return `${baseKey}-${userId}`;
+  }
+  return baseKey; // Fallback для тестирования вне Telegram
+}
+
+// Регистрирует пользователя в API сервере
+async function registerUserInAPI() {
+  console.log("🚀 registerUserInAPI() вызвана");
+  
+  try {
+    // Проверяем доступность Telegram WebApp
+    console.log("📱 Проверка Telegram WebApp:", {
+      TG_exists: !!TG,
+      initDataUnsafe: !!TG?.initDataUnsafe,
+      initData: !!TG?.initData
+    });
+    
+    const user = getTelegramUser();
+    console.log("👤 Данные пользователя из getTelegramUser():", user);
+    
+    if (!user) {
+      console.error("❌ Не удалось получить данные пользователя из Telegram");
+      console.error("❌ TG объект:", TG);
+      console.error("❌ TG.initDataUnsafe:", TG?.initDataUnsafe);
+      console.error("❌ TG.initData:", TG?.initData);
+      return;
+    }
+    
+    const userId = user.id;
+    console.log("📝 Начинаем регистрацию пользователя в API:", {
+      userId: userId,
+      username: user.username,
+      firstName: user.firstName,
+      photoUrl: user.photoUrl
+    });
+    
+    // Получаем фото пользователя из Telegram
+    let photoUrl = user.photoUrl;
+    if (!photoUrl && TG) {
+      try {
+        // Пробуем получить фото через Telegram API
+        if (TG.initDataUnsafe?.user?.photo_url) {
+          photoUrl = TG.initDataUnsafe.user.photo_url;
+          console.log("📸 Фото получено из initDataUnsafe:", photoUrl);
+        }
+      } catch(e) {
+        console.warn("⚠️ Не удалось получить фото пользователя:", e);
+      }
+    }
+    
+    const registrationData = {
+      user_id: userId,
+      username: user.username || null,
+      first_name: user.firstName || null,
+      photo_url: photoUrl || null
+    };
+    
+    console.log("📤 Отправка данных регистрации в API:", registrationData);
+    console.log("📤 URL:", `${API_BASE_URL}/api/users/register`);
+    
+    const response = await fetch(`${API_BASE_URL}/api/users/register`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(registrationData)
+    });
+    
+    console.log("📥 Ответ от API:", {
+      status: response.status,
+      statusText: response.statusText,
+      ok: response.ok
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      console.log("📦 Данные ответа от API:", data);
+      
+      if (data.success) {
+        console.log("✅ Пользователь успешно зарегистрирован в API:", userId);
+        // Сохраняем пользователя в локальный кэш топа
+        savePlayerToLocalCache(userId, user.username, user.firstName, user.photoUrl || photoUrl);
+        toast("✅ Регистрация в API успешна", 2000);
+      } else {
+        console.error("❌ API вернул ошибку при регистрации:", data.error);
+        // Даже при ошибке API сохраняем пользователя локально
+        savePlayerToLocalCache(userId, user.username, user.firstName, user.photoUrl || photoUrl);
+        toast(`⚠️ Ошибка регистрации: ${data.error}`, 3000);
+      }
+    } else {
+      const errorText = await response.text().catch(() => 'Не удалось прочитать ошибку');
+      console.error("❌ Ошибка регистрации пользователя в API:", {
+        status: response.status,
+        statusText: response.statusText,
+        errorText: errorText
+      });
+      // Даже при ошибке API сохраняем пользователя локально
+      savePlayerToLocalCache(userId, user.username, user.firstName, user.photoUrl || photoUrl);
+      toast(`⚠️ Ошибка регистрации: ${response.status}`, 3000);
+    }
+  } catch(e) {
+    console.error("❌ Критическая ошибка при регистрации пользователя в API:", e);
+    console.error("❌ Stack trace:", e.stack);
+    // Даже при ошибке сохраняем пользователя локально
+    const user = getTelegramUser();
+    if (user) {
+      savePlayerToLocalCache(user.id, user.username, user.firstName, user.photoUrl);
+    }
+    toast(`⚠️ Ошибка регистрации: ${e.message}`, 3000);
+    // Не блокируем загрузку приложения при ошибке регистрации
+  }
+}
+
+// Сохраняет игрока в локальный кэш топа
+function savePlayerToLocalCache(userId, username, firstName, photoUrl) {
+  try {
+    const key = "pdd-duel-top-players-cache";
+    let players = [];
+    
+    // Загружаем существующий кэш
+    const cached = localStorage.getItem(key);
+    if (cached) {
+      try {
+        players = JSON.parse(cached);
+      } catch(e) {
+        console.warn("⚠️ Ошибка парсинга кэша игроков:", e);
+        players = [];
+      }
+    }
+    
+    // Ищем игрока в кэше
+    const userIdNum = typeof userId === 'string' ? parseInt(userId, 10) : userId;
+    const existingIndex = players.findIndex(p => {
+      const pUserId = typeof p.userId === 'string' ? parseInt(p.userId, 10) : p.userId;
+      return pUserId === userIdNum;
+    });
+    
+    const playerData = {
+      userId: userIdNum,
+      username: username || '',
+      firstName: firstName || '',
+      lastName: '',
+      photoUrl: photoUrl || null,
+      hideUsername: false,
+      gamesPlayed: 0,
+      wins: 0,
+      losses: 0,
+      winRate: 0,
+      experience: 0,
+      level: 1,
+      lastUpdate: Date.now()
+    };
+    
+    if (existingIndex >= 0) {
+      // Обновляем существующего игрока
+      players[existingIndex] = { ...players[existingIndex], ...playerData };
+    } else {
+      // Добавляем нового игрока
+      players.push(playerData);
+    }
+    
+    // Сохраняем обновленный кэш
+    localStorage.setItem(key, JSON.stringify(players));
+    console.log("✅ Игрок сохранен в локальный кэш:", userIdNum);
+  } catch(e) {
+    console.error("❌ Ошибка сохранения игрока в локальный кэш:", e);
+  }
+}
+
+// Загружает игроков из локального кэша
+function getPlayersFromLocalCache() {
+  try {
+    const key = "pdd-duel-top-players-cache";
+    const cached = localStorage.getItem(key);
+    if (cached) {
+      const players = JSON.parse(cached);
+      console.log(`📦 Загружено ${players.length} игроков из локального кэша`);
+      return players;
+    }
+  } catch(e) {
+    console.warn("⚠️ Ошибка загрузки игроков из локального кэша:", e);
+  }
+  return [];
+}
+
+// Сохраняет список игроков в локальный кэш
+function savePlayersToLocalCache(players) {
+  try {
+    const key = "pdd-duel-top-players-cache";
+    localStorage.setItem(key, JSON.stringify(players));
+    console.log(`✅ Сохранено ${players.length} игроков в локальный кэш`);
+  } catch(e) {
+    console.error("❌ Ошибка сохранения игроков в локальный кэш:", e);
+  }
+}
+ 
+ const State = {
+   pool: [],
+   byTicket: new Map(),
+   topics: new Map(),
+   duel: null,
+   lock: false,
+   lastTouchTs: 0,
+   markup: null,
+   penalties: null,
+   tap: null,
+   ignoreClickUntil: 0,
+   advanceTimer: null,
+   usedFallback: false,
+   penaltiesLoading: false,
+   markupLoading: false,
+   // Статистика
+   stats: {
+     gamesPlayed: 0,
+     ticketsSolved: 0,
+     experience: 0,
+     level: 1,
+     topPlace: null,
+     ticketsProgress: {},
+     topicsProgress: {}
+   },
+   onlineCount: 0,
+   // Настройки пользователя
+   settings: {
+     showDifficulty: false,
+     hideCompletedTickets: false,
+     hideFromTop: false,
+     hideUsername: false
+   },
+   // Глобальная статистика по билетам для расчета сложности
+   ticketsDifficultyStats: {},
+  // Состояние поиска противника для дуэли
+  duelSearch: {
+    active: false,
+    startTime: null,
+    searchInterval: null,
+    opponentId: null,
+    isBot: false
+  },
+  // Прогресс соперника в текущей дуэли
+  opponentProgress: {
+    currentQuestion: 0,
+    score: 0
+  },
+  // Интервал для обновления прогресса соперника
+  opponentProgressInterval: null
+};
+ 
+ let delegationBound = false;
+ let menuBound = false;
+ const scheduleFrame = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (fn)=>setTimeout(fn, 16);
+ 
+ const MANIFEST_URL = "questions/index.json";
+ const MARKUP_URL = "markup/markup.json";
+ const PENALTIES_URL = "penalties/penalties.json";
+const FALLBACK_MANIFEST = {
+  tickets: []
+};
+
+const FALLBACK_QUESTION_BANK = [
+  {
+    question: "Пример вопроса ПДД",
+    answers: [
+      { text: "Правильный ответ", is_correct: true },
+      { text: "Неправильный ответ 1", is_correct: false },
+      { text: "Неправильный ответ 2", is_correct: false }
+    ],
+    tip: "Это демонстрационный вопрос"
+  }
+];
+ 
+ /* =======================
+    Лоадер
+======================= */
+function showLoader() {
+  const overlay = qs("#loader-overlay");
+  if(overlay) {
+    overlay.classList.add("active");
+  }
+}
+
+function hideLoader() {
+  const overlay = qs("#loader-overlay");
+  if(overlay) {
+    overlay.classList.remove("active");
+    setTimeout(() => {
+      const progress = qs("#loader-progress");
+      if(progress) progress.style.width = "0%";
+    }, 300);
+  }
+}
+
+function updateLoaderProgress(percent) {
+  const progress = qs("#loader-progress");
+  if(progress) progress.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+}
+
+ /* =======================
+    Запуск
+======================= */
+function initApp(){
+  try {
+    bindMenu();
+    bindDelegation();
+  } catch(err){
+    console.error("Ошибка инициализации интерфейса:", err);
+  }
+  boot();
+}
+
+// Улучшенная логика запуска
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initApp, { once: true });
+} else {
+  // DOM уже готов
+  if (document.body) {
+    setTimeout(initApp, 0);
+  } else {
+    // Ждем body
+    const checkBody = setInterval(() => {
+      if (document.body) {
+        clearInterval(checkBody);
+        initApp();
+      }
+    }, 10);
+    // На всякий случай запускаем через 100мс
+    setTimeout(() => {
+      clearInterval(checkBody);
+      if (document.body) initApp();
+    }, 100);
+  }
+}
+ 
+// Глобальная переменная для avatarDataUrl
+let globalAvatarDataUrl = null;
+
+// Глобальная функция для обработки регистрации (доступна везде)
+window.handleRegistrationSubmit = async function(e) {
+  console.log("🔘 handleRegistrationSubmit вызвана глобально", e);
+  
+  if (e) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+  
+  // Получаем элементы
+  const nicknameInput = document.getElementById("nickname-input");
+  const continueBtn = document.getElementById("registration-continue-btn");
+  const suggestionsDiv = document.getElementById("nickname-suggestions");
+  const screen1 = document.getElementById("registration-screen-1");
+  const screen2 = document.getElementById("registration-screen-2");
+  
+  console.log("📝 nicknameInput:", nicknameInput);
+  console.log("📝 continueBtn:", continueBtn);
+  
+  const nickname = nicknameInput ? nicknameInput.value.trim() : '';
+  console.log("📝 Псевдоним:", nickname);
+  
+  if (!nickname) {
+    console.warn("⚠️ Псевдоним пустой");
+    toast("⚠️ Введите псевдоним", 2000);
+    return;
+  }
+  
+  if (nickname.length > 10) {
+    console.warn("⚠️ Псевдоним слишком длинный");
+    toast("⚠️ Псевдоним не может быть длиннее 10 символов", 2000);
+    return;
+  }
+  
+  // Отключаем кнопку
+  if (continueBtn) {
+    continueBtn.disabled = true;
+    continueBtn.textContent = "⏳ Создание...";
+  }
+  
+  try {
+    console.log("📤 Начинаем регистрацию с nickname:", nickname);
+    console.log("📤 globalAvatarDataUrl:", globalAvatarDataUrl);
+    
+    // Регистрируем пользователя с nickname и avatar
+    console.log("⏳ Вызываем registerUserWithNickname...");
+    const result = await registerUserWithNickname(nickname, globalAvatarDataUrl);
+    console.log("✅ registerUserWithNickname вернул:", result);
+    
+    console.log("✅ Регистрация успешна");
+    
+    // Небольшая задержка для плавности
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    // Скрываем экран регистрации
+    console.log("🔍 Скрываем экраны регистрации...");
+    if (screen1) {
+      screen1.classList.add("hidden");
+      console.log("✅ screen1 скрыт");
+    } else {
+      console.warn("⚠️ screen1 не найден");
+    }
+    if (screen2) {
+      screen2.classList.add("hidden");
+      console.log("✅ screen2 скрыт");
+    } else {
+      console.warn("⚠️ screen2 не найден");
+    }
+    
+    // Показываем основное приложение
+    console.log("🔍 Показываем основное приложение...");
+    const app = document.querySelector(".app");
+    console.log("🔍 app:", app);
+    if (app) {
+      app.style.display = "flex";
+      console.log("✅ app показан");
+    } else {
+      console.error("❌ app не найден!");
+      // Попробуем найти альтернативные селекторы
+      const appAlt = document.querySelector("#app") || document.querySelector(".main-app");
+      if (appAlt) {
+        appAlt.style.display = "flex";
+        console.log("✅ app найден по альтернативному селектору");
+      }
+    }
+    
+    toast("✅ Профиль создан!", 2000);
+    
+    // Перезагружаем данные приложения
+    console.log("🔄 Перезагружаем данные приложения...");
+    if (typeof backgroundLoad === 'function') {
+      backgroundLoad();
+    } else if (typeof loadAppData === 'function') {
+      loadAppData();
+    }
+  } catch(error) {
+    console.error("❌ Ошибка регистрации:", error);
+    console.error("❌ Stack:", error.stack);
+    console.error("❌ Error name:", error.name);
+    console.error("❌ Error message:", error.message);
+    
+    // Если nickname занят, показываем предложения
+    if (error.suggestions && suggestionsDiv) {
+      console.log("📝 Показываем предложения nickname");
+      showNicknameSuggestions(error.suggestions);
+    } else {
+      const errorMsg = error.message || "Неизвестная ошибка";
+      console.error("❌ Показываем ошибку пользователю:", errorMsg);
+      toast(`❌ Ошибка: ${errorMsg}`, 3000);
+    }
+    
+    // Включаем кнопку обратно
+    if (continueBtn) {
+      continueBtn.disabled = false;
+      continueBtn.textContent = "Продолжить";
+      console.log("✅ Кнопка включена обратно");
+    }
+  }
+};
+
+// Инициализация экрана регистрации
+function initRegistrationScreen() {
+  const registrationScreen1 = qs("#registration-screen-1");
+  const registrationScreen2 = qs("#registration-screen-2");
+  const startBtn = qs("#registration-start-btn");
+  const closeBtn = qs("#registration-close-btn");
+  const avatarPreview = qs("#avatar-preview");
+  const nicknameInput = qs("#nickname-input");
+  const registrationForm = qs("#registration-form");
+  const continueBtn = qs("#registration-continue-btn");
+  const suggestionsDiv = qs("#nickname-suggestions");
+  
+  let avatarDataUrl = null;
+  
+  // Загружаем данные пользователя из Telegram
+  const user = getTelegramUser();
+  if (user && user.photoUrl) {
+    // Показываем фото из Telegram если есть
+    avatarPreview.innerHTML = `<img src="${user.photoUrl}" alt="Avatar" style="width: 100%; height: 100%; object-fit: cover;">`;
+    avatarDataUrl = user.photoUrl;
+    globalAvatarDataUrl = user.photoUrl; // Сохраняем глобально
+  }
+  
+  if (user && user.firstName) {
+    // Заполняем псевдоним из Telegram если есть (максимум 10 символов)
+    nicknameInput.value = user.firstName.substring(0, 10);
+  }
+  
+  // Кнопка "Создать профиль" - переход на второй экран
+  if (startBtn) {
+    startBtn.addEventListener("click", () => {
+      if (registrationScreen1) registrationScreen1.classList.add("hidden");
+      if (registrationScreen2) registrationScreen2.classList.remove("hidden");
+    }, { passive: true });
+  }
+  
+  // Кнопка закрытия - возврат на первый экран
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      if (registrationScreen2) registrationScreen2.classList.add("hidden");
+      if (registrationScreen1) registrationScreen1.classList.remove("hidden");
+    }, { passive: true });
+  }
+  
+  // Проверка nickname при вводе
+  let checkTimeout = null;
+  if (nicknameInput) {
+    nicknameInput.addEventListener("input", (e) => {
+      const nickname = e.target.value.trim();
+      
+      // Ограничиваем длину до 10 символов
+      if (nickname.length > 10) {
+        e.target.value = nickname.substring(0, 10);
+        return;
+      }
+      
+      // Скрываем предложения при изменении
+      if (suggestionsDiv) {
+        suggestionsDiv.classList.add("hidden");
+        suggestionsDiv.innerHTML = "";
+      }
+      
+      // Проверяем уникальность с задержкой
+      if (checkTimeout) clearTimeout(checkTimeout);
+      if (nickname.length >= 1) {
+        checkTimeout = setTimeout(() => {
+          checkNicknameAvailability(nickname);
+        }, 500);
+      }
+    }, { passive: true });
+  }
+  
+  // Используем глобальную функцию
+  const handleFormSubmit = window.handleRegistrationSubmit;
+  
+  // Обработчик отправки формы
+  if (registrationForm) {
+    console.log("✅ Форма найдена, добавляем обработчик submit");
+    registrationForm.addEventListener("submit", handleFormSubmit, { passive: false });
+  } else {
+    console.error("❌ Форма не найдена!");
+  }
+  
+  // Простой и надежный обработчик - используем onclick напрямую
+  const setupButtonHandler = () => {
+    const btn = document.getElementById("registration-continue-btn");
+    if (btn) {
+      console.log("✅ Кнопка найдена, настраиваем обработчик");
+      
+      // Убираем все старые обработчики через клонирование
+      const newBtn = btn.cloneNode(true);
+      btn.parentNode.replaceChild(newBtn, btn);
+      
+      // Добавляем обработчик через onclick (самый надежный способ)
+      newBtn.onclick = function(e) {
+        console.log("🔘 onClick сработал!");
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        window.handleRegistrationSubmit(null);
+        return false;
+      };
+      
+      // Также добавляем через addEventListener для надежности
+      newBtn.addEventListener("click", function(e) {
+        console.log("🔘 addEventListener сработал!");
+        e.preventDefault();
+        e.stopPropagation();
+        window.handleRegistrationSubmit(null);
+        return false;
+      }, { passive: false });
+      
+      console.log("✅ Обработчики добавлены на кнопку");
+      return true;
+    }
+    console.warn("⚠️ Кнопка не найдена в setupButtonHandler");
+    return false;
+  };
+  
+  // Пробуем сразу
+  if (!setupButtonHandler()) {
+    console.warn("⚠️ Кнопка не найдена сразу, пробуем через задержки");
+    setTimeout(() => {
+      console.log("🔄 Попытка 1 (100ms)");
+      setupButtonHandler();
+    }, 100);
+    setTimeout(() => {
+      console.log("🔄 Попытка 2 (300ms)");
+      setupButtonHandler();
+    }, 300);
+    setTimeout(() => {
+      console.log("🔄 Попытка 3 (500ms)");
+      setupButtonHandler();
+    }, 500);
+  }
+  
+  // Делегирование на document как последний fallback
+  const documentClickHandler = function(e) {
+    const target = e.target;
+    console.log("🔍 Клик на document, target:", target, "id:", target?.id);
+    if (target && target.id === "registration-continue-btn") {
+      console.log("🔘 Делегирование на document сработало!");
+      e.preventDefault();
+      e.stopPropagation();
+      window.handleRegistrationSubmit(null);
+    }
+  };
+  
+  document.addEventListener("click", documentClickHandler, { passive: false, capture: true });
+  console.log("✅ Делегирование на document добавлено");
+  
+  // Также пробуем через window.onclick для максимальной надежности
+  window.addEventListener("click", function(e) {
+    const target = e.target;
+    if (target && (target.id === "registration-continue-btn" || target.closest("#registration-continue-btn"))) {
+      console.log("🔘 window.onclick сработал!");
+      e.preventDefault();
+      e.stopPropagation();
+      window.handleRegistrationSubmit(null);
+    }
+  }, { passive: false, capture: true });
+}
+
+// Проверка доступности nickname
+async function checkNicknameAvailability(nickname) {
+  if (!nickname || nickname.length < 1) return;
+  
+  try {
+    const user = getTelegramUserId();
+    const response = await fetch(`${API_BASE_URL}/api/users/check-nickname`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        nickname: nickname,
+        user_id: user
+      })
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (!data.available && data.suggestions) {
+        showNicknameSuggestions(data.suggestions);
+      }
+    }
+  } catch(e) {
+    console.warn("⚠️ Ошибка проверки nickname:", e);
+  }
+}
+
+// Показать предложения nickname
+function showNicknameSuggestions(suggestions) {
+  const suggestionsDiv = qs("#nickname-suggestions");
+  const nicknameInput = qs("#nickname-input");
+  
+  if (!suggestionsDiv || !nicknameInput) return;
+  
+  if (suggestions && suggestions.length > 0) {
+    suggestionsDiv.innerHTML = suggestions.map(suggestion => 
+      `<div class="registration-suggestion" data-nickname="${suggestion}">${suggestion}</div>`
+    ).join("");
+    
+    suggestionsDiv.classList.remove("hidden");
+    
+    // Обработчики клика на предложения
+    suggestionsDiv.querySelectorAll(".registration-suggestion").forEach(suggestion => {
+      suggestion.addEventListener("click", () => {
+        const suggestedNickname = suggestion.dataset.nickname;
+        nicknameInput.value = suggestedNickname;
+        suggestionsDiv.classList.add("hidden");
+        suggestionsDiv.innerHTML = "";
+      }, { passive: true });
+    });
+  }
+}
+
+// Регистрация пользователя с nickname и avatar
+async function registerUserWithNickname(nickname, avatarDataUrl) {
+  let user = getTelegramUser();
+  
+  // Если данные Telegram недоступны, создаем временного пользователя
+  if (!user) {
+    console.warn("⚠️ Telegram данные недоступны, создаем временного пользователя");
+    const tempUserId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    user = {
+      id: tempUserId,
+      username: null,
+      firstName: nickname,
+      lastName: '',
+      photoUrl: avatarDataUrl || null
+    };
+    console.log("📝 Создан временный пользователь:", user);
+  }
+  
+  const userId = user.id;
+  
+  // Ограничиваем длину nickname до 10 символов
+  nickname = nickname.trim().substring(0, 10);
+  
+  if (!nickname) {
+    throw new Error("Псевдоним не может быть пустым");
+  }
+  
+  // Используем фото из Telegram
+  let photoUrl = avatarDataUrl || user.photoUrl || null;
+  
+  const registrationData = {
+    user_id: userId,
+    username: user.username || null,
+    first_name: user.firstName || nickname, // Используем firstName из Telegram или nickname
+    nickname: nickname, // Псевдоним отдельно
+    photo_url: photoUrl
+  };
+  
+  console.log("📤 Регистрация с nickname:", registrationData);
+  console.log("📤 URL:", `${API_BASE_URL}/api/users/register`);
+  
+  let response;
+  try {
+    console.log("⏳ Отправляем запрос на сервер...");
+    response = await fetch(`${API_BASE_URL}/api/users/register`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(registrationData)
+    });
+    console.log("✅ Получен ответ от сервера:", response.status, response.statusText);
+  } catch (fetchError) {
+    console.error("❌ Ошибка сети при регистрации:", fetchError);
+    throw new Error(`Ошибка сети: ${fetchError.message}`);
+  }
+  
+  let responseData;
+  try {
+    responseData = await response.json();
+    console.log("✅ Данные ответа:", responseData);
+  } catch (jsonError) {
+    console.error("❌ Ошибка парсинга JSON:", jsonError);
+    const text = await response.text().catch(() => 'Не удалось прочитать ответ');
+    console.error("❌ Текст ответа:", text);
+    throw new Error(`Ошибка сервера: ${response.status} - ${text}`);
+  }
+  
+  if (!response.ok) {
+    console.error("❌ Сервер вернул ошибку:", response.status, responseData);
+    if (responseData.error === 'nickname_taken' && responseData.suggestions) {
+      const error = new Error(responseData.message || "Этот псевдоним уже занят");
+      error.suggestions = responseData.suggestions;
+      throw error;
+    }
+    const errorText = responseData.error || responseData.message || 'Неизвестная ошибка';
+    throw new Error(`Ошибка регистрации: ${response.status} - ${errorText}`);
+  }
+  
+  if (!responseData.success) {
+    console.error("❌ Сервер вернул success: false", responseData);
+    if (responseData.error === 'nickname_taken' && responseData.suggestions) {
+      const error = new Error(responseData.message || "Этот псевдоним уже занят");
+      error.suggestions = responseData.suggestions;
+      throw error;
+    }
+    throw new Error(responseData.error || responseData.message || "Ошибка регистрации");
+  }
+  
+  // Сохраняем nickname в localStorage
+  const userIdStr = String(userId);
+  const userDataKey = `pdd-duel-user-${userIdStr}`;
+  localStorage.setItem(userDataKey, JSON.stringify({
+    nickname: nickname,
+    avatar: avatarDataUrl,
+    registered: true
+  }));
+  
+  console.log("✅ Пользователь зарегистрирован с nickname:", nickname);
+  return { success: true, nickname, userId };
+}
+
+async function boot(){
+  console.log("🚀 boot() запущен");
+  
+  // Показываем экран регистрации вместо загрузчика
+  const registrationScreen = qs("#registration-screen");
+  const app = qs(".app");
+  
+  if (registrationScreen) {
+    registrationScreen.classList.remove("hidden");
+  }
+  if (app) {
+    app.style.display = "none";
+  }
+  
+  // Инициализируем экран регистрации
+  initRegistrationScreen();
+  
+  // Загружаем данные приложения в фоне пока пользователь регистрируется
+  const backgroundLoad = async () => {
+    console.log("📦 Загрузка данных в фоне...");
+    
+    // Предзагружаем штрафы и разметку
+    Promise.all([
+      loadPenalties().catch(() => {}),
+      loadMarkup().catch(() => {})
+    ]).catch(() => {});
+    
+    // Загружаем fallback данные
+    try {
+      hydrateFallback({ reset: true });
+      console.log("✓ Fallback данные загружены");
+    } catch(err) {
+      console.error("Ошибка загрузки fallback:", err);
+    }
+    
+    // Загружаем билеты
+    try {
+      await loadTickets();
+      console.log("✓ Билеты загружены");
+    } catch(e) {
+      console.error("Ошибка загрузки билетов:", e);
+    }
+    
+    // Гарантируем, что данные есть
+    if (!State.pool.length) {
+      try {
+        hydrateFallback();
+      } catch(err) {
+        console.error("Ошибка применения fallback:", err);
+      }
+    }
+    
+    // Инициализируем интерфейс (но не показываем пока не зарегистрирован)
+    try {
+      loadUserStats();
+      updateStatsDisplay();
+      startStatsRotation();
+      renderHome();
+      updateStatsCounters();
+      saveUserTopData();
+    } catch(err) {
+      console.error("Ошибка инициализации:", err);
+    }
+    
+    console.log("✅ Фоновая загрузка завершена");
+  };
+  
+  // Запускаем загрузку в фоне
+  backgroundLoad().catch(e => {
+    console.error("❌ Ошибка фоновой загрузки:", e);
+  });
+  
+  console.log("✅ boot() завершен, ожидаем регистрации");
+}
+ 
+ 
+ /* =======================
+    Навигация
+ ======================= */
+ function toggleSubpage(isSub){
+   const appRoot = qs(".app");
+   const isSubpage = !!isSub;
+  if (appRoot) appRoot.classList.toggle("app--subpage", isSubpage);
+   setActive(null);
+   // Убрали scrollIntoView - теперь контент показывается как полноэкранная страница
+ }
+ 
+ function setView(html, { subpage = true, title = "", showSettings = false, settingsContext = null } = {}){
+   const host = document.getElementById("screen");
+   if(!host) return;
+   
+   if (subpage) {
+     toggleSubpage(true);
+     
+     // Добавляем кнопку настроек в header если нужно
+     const settingsBtn = showSettings ? `<button type="button" class="subpage-settings-btn" id="subpage-settings-btn" data-settings data-settings-context="${settingsContext || ''}">⚙️</button>` : '';
+     
+     // Сохраняем контекст настроек в data-атрибуте
+     if (settingsContext) {
+       host.setAttribute('data-settings-context', settingsContext);
+     } else {
+       host.removeAttribute('data-settings-context');
+     }
+     
+     // Создаем структуру правильно: заголовок отдельно, контент отдельно
+     host.innerHTML = `
+       <header class="subpage-header">
+         <button type="button" class="back-btn" data-back>Назад</button>
+         <h2 class="subpage-title">${esc((title || "ПДД ДУЭЛИ").trim())}</h2>
+         ${settingsBtn}
+       </header>
+       <div class="view-content-wrapper">
+         <div class="view-content">
+           ${html || ""}
+         </div>
+       </div>
+     `;
+     host.className = "screen";
+     // Скроллим только контент, не весь экран
+     const wrapper = host.querySelector(".view-content-wrapper");
+     if(wrapper) {
+       wrapper.scrollTop = 0;
+     }
+     
+     // Привязываем кнопку настроек если есть
+     if (showSettings) {
+       scheduleFrame(() => {
+         const settingsBtn = qs("#subpage-settings-btn");
+         if (settingsBtn) {
+           settingsBtn.addEventListener("click", (e) => {
+             e.preventDefault();
+             e.stopPropagation();
+             const context = host.getAttribute('data-settings-context');
+             uiSettings(context);
+           }, { passive: true });
+         }
+       });
+     }
+   } else {
+     toggleSubpage(false);
+     host.className = "screen screen--hidden";
+     host.innerHTML = "";
+     host.removeAttribute('data-settings-context');
+   }
+ }
+function renderHome(){
+  clearAdvanceTimer();
+  setActive(null);
+  setView("", { subpage: false });
+  switchTab('home');
+ }
+ 
+ function setActive(id){
+   qsa("[data-action]").forEach(b=>b.classList.remove("active"));
+  if(id){
+    const el = qs("#"+id);
+    if (el) el.classList.add("active");
+  }
+ }
+ 
+ /* =======================
+    Меню
+ ======================= */
+function bindMenu(){
+  if (menuBound) return;
+  
+  // Навигация по табам
+  qsa("[data-tab]").forEach(btn=>{
+    btn.addEventListener("click", e=>{
+      const tab = e.currentTarget.dataset.tab;
+      switchTab(tab);
+    }, { passive:true });
+  });
+  
+  // Кнопки действий
+  qsa("[data-action]").forEach(btn=>{
+    btn.addEventListener("click", e=>{
+      const act = e.currentTarget.dataset.action;
+      setActive(e.currentTarget.id);
+      if (act==="quick")    startDuel({mode:"quick"});
+      if (act==="duels")    startDuelSearch();
+      if (act==="topics")   uiTopics();
+      if (act==="tickets")  uiTickets();
+      if (act==="markup")   uiMarkup();
+      if (act==="penalties")uiPenalties();
+      if (act==="favorites") toast("⭐ Избранное пока в разработке");
+    }, { passive:true });
+  });
+  
+  // Кнопка настроек в главном меню
+  const settingsBtn = qs("#settings-btn");
+  if (settingsBtn) {
+    settingsBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      uiMainSettings();
+    }, { passive: true });
+  }
+  
+  // Кнопка "Место в топе" обрабатывается в handleTap
+  
+  menuBound = true;
+}
+
+/* =======================
+   Навигация по табам
+======================= */
+function switchTab(tabName) {
+  // Скрываем все табы
+  qsa(".tab-content").forEach(tab => {
+    tab.classList.remove("active");
+  });
+  
+  // Показываем выбранный таб
+  const tab = qs(`#${tabName}-tab`);
+  if (tab) {
+    tab.classList.add("active");
+  }
+  
+  // Обновляем активную кнопку в нижней навигации
+  qsa(".bottom-nav-item").forEach(item => {
+    item.classList.toggle("active", item.dataset.tab === tabName);
+  });
+  
+  // Скрываем экран если он открыт
+  const screen = qs("#screen");
+  if (screen) {
+    screen.classList.add("screen--hidden");
+  }
+}
+
+/* =======================
+   Статистика пользователя
+======================= */
+function loadUserStats() {
+  try {
+    const key = getStorageKey("pdd-duel-stats");
+    const saved = localStorage.getItem(key);
+    if (saved) {
+      const stats = JSON.parse(saved);
+      // Убеждаемся, что gamesPlayed и ticketsSolved - это числа, а не строки или undefined
+      const gamesPlayed = typeof stats.gamesPlayed === 'number' ? stats.gamesPlayed : 0;
+      const ticketsSolved = typeof stats.ticketsSolved === 'number' ? stats.ticketsSolved : 0;
+      
+      console.log("📊 Загружена статистика:", {
+        gamesPlayed,
+        ticketsSolved,
+        experience: stats.experience || 0
+      });
+      
+      State.stats = {
+        gamesPlayed: gamesPlayed,
+        ticketsSolved: ticketsSolved,
+        experience: stats.experience || 0,
+        level: stats.level || 1,
+        topPlace: stats.topPlace || null,
+        ticketsProgress: stats.ticketsProgress || {},
+        topicsProgress: stats.topicsProgress || {}
+      };
+    } else {
+      // Инициализируем нулями если нет сохраненных данных
+      State.stats.gamesPlayed = 0;
+      State.stats.ticketsSolved = 0;
+      State.stats.ticketsProgress = {};
+      State.stats.topicsProgress = {};
+    }
+  } catch(e) {
+    console.error("Ошибка загрузки статистики:", e);
+    // При ошибке тоже инициализируем нулями
+    State.stats.gamesPlayed = 0;
+    State.stats.ticketsSolved = 0;
+    State.stats.ticketsProgress = {};
+    State.stats.topicsProgress = {};
+  }
+  
+  // Загружаем настройки
+  try {
+    const settingsKey = getStorageKey("pdd-duel-settings");
+    const savedSettings = localStorage.getItem(settingsKey);
+    if (savedSettings) {
+      State.settings = JSON.parse(savedSettings);
+    }
+  } catch(e) {
+    console.error("Ошибка загрузки настроек:", e);
+  }
+  
+  // Загружаем глобальную статистику сложности билетов
+  loadTicketsDifficultyStats();
+}
+
+function saveUserSettings() {
+  try {
+    const key = getStorageKey("pdd-duel-settings");
+    localStorage.setItem(key, JSON.stringify(State.settings));
+    
+    // Отправляем настройки на сервер
+    const userId = getTelegramUserId();
+    if (userId) {
+      // Отправляем hide_username на сервер
+      if (State.settings.hideUsername !== undefined) {
+        fetch(`${API_BASE_URL}/api/users/settings`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            user_id: userId,
+            setting_name: 'hide_username',
+            setting_value: State.settings.hideUsername || false
+          })
+        }).then(response => {
+          if (response.ok) {
+            console.log("✅ Настройка hide_username сохранена на сервере");
+          } else {
+            console.warn("⚠️ Не удалось сохранить настройку на сервере:", response.status);
+          }
+        }).catch(e => {
+          console.warn("⚠️ Ошибка отправки настройки на сервер:", e);
+        });
+      }
+      
+      // Отправляем hide_from_top на сервер
+      if (State.settings.hideFromTop !== undefined) {
+        fetch(`${API_BASE_URL}/api/users/settings`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            user_id: userId,
+            setting_name: 'hide_from_top',
+            setting_value: State.settings.hideFromTop || false
+          })
+        }).then(response => {
+          if (response.ok) {
+            console.log("✅ Настройка hide_from_top сохранена на сервере:", State.settings.hideFromTop);
+            // Кэш уже очищен в обработчике клика, не нужно очищать здесь
+          } else {
+            console.warn("⚠️ Не удалось сохранить настройку hide_from_top на сервере:", response.status);
+            toast("⚠️ Не удалось сохранить настройку на сервере. Попробуйте еще раз.", 3000);
+          }
+        }).catch(e => {
+          console.warn("⚠️ Ошибка отправки настройки hide_from_top на сервер:", e);
+          toast("⚠️ Ошибка сохранения настройки. Проверьте подключение к интернету.", 3000);
+        });
+      }
+    }
+  } catch(e) {
+    console.error("Ошибка сохранения настроек:", e);
+  }
+}
+
+function loadTicketsDifficultyStats() {
+  try {
+    const key = getStorageKey("pdd-duel-tickets-difficulty");
+    const saved = localStorage.getItem(key);
+    if (saved) {
+      State.ticketsDifficultyStats = JSON.parse(saved);
+    } else {
+      State.ticketsDifficultyStats = {};
+    }
+  } catch(e) {
+    console.error("Ошибка загрузки статистики сложности:", e);
+    State.ticketsDifficultyStats = {};
+  }
+}
+
+function saveTicketsDifficultyStats() {
+  try {
+    const key = getStorageKey("pdd-duel-tickets-difficulty");
+    localStorage.setItem(key, JSON.stringify(State.ticketsDifficultyStats));
+  } catch(e) {
+    console.error("Ошибка сохранения статистики сложности:", e);
+  }
+}
+
+// Обновляет статистику сложности билета на основе ответов пользователя
+function updateTicketDifficultyStats(ticketLabel, correctCount, totalCount) {
+  if (!State.ticketsDifficultyStats[ticketLabel]) {
+    State.ticketsDifficultyStats[ticketLabel] = {
+      totalAttempts: 0,
+      totalCorrect: 0,
+      totalQuestions: 0
+    };
+  }
+  
+  const stats = State.ticketsDifficultyStats[ticketLabel];
+  stats.totalAttempts += 1;
+  stats.totalCorrect += correctCount;
+  stats.totalQuestions += totalCount;
+  
+  saveTicketsDifficultyStats();
+}
+
+// Вычисляет уровень сложности билета на основе статистики
+function getTicketDifficulty(ticketLabel) {
+  const stats = State.ticketsDifficultyStats[ticketLabel];
+  
+  // Если нет статистики, возвращаем случайный уровень сложности
+  if (!stats || stats.totalAttempts === 0) {
+    const difficulties = [
+      { text: "Легко", level: "easy" },
+      { text: "Средне", level: "medium" },
+      { text: "Сложно", level: "hard" },
+      { text: "Невозможно", level: "impossible" }
+    ];
+    // Используем хеш от названия билета для стабильного "случайного" выбора
+    let hash = 0;
+    for (let i = 0; i < ticketLabel.length; i++) {
+      hash = ((hash << 5) - hash) + ticketLabel.charCodeAt(i);
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    const randomIndex = Math.abs(hash) % difficulties.length;
+    return difficulties[randomIndex];
+  }
+  
+  // Процент правильных ответов
+  const correctPercent = (stats.totalCorrect / stats.totalQuestions) * 100;
+  
+  if (correctPercent >= 75) {
+    return { text: "Легко", level: "easy" };
+  } else if (correctPercent >= 50) {
+    return { text: "Средне", level: "medium" };
+  } else if (correctPercent >= 25) {
+    return { text: "Сложно", level: "hard" };
+  } else {
+    return { text: "Невозможно", level: "impossible" };
+  }
+}
+
+function saveUserStats() {
+  try {
+    const key = getStorageKey("pdd-duel-stats");
+    localStorage.setItem(key, JSON.stringify(State.stats));
+  } catch(e) {
+    console.error("Ошибка сохранения статистики:", e);
+  }
+}
+
+function saveTicketProgress(ticketKey, correctCount, totalCount, answeredCount = null, currentIndex = null, answers = null, questionOrder = null) {
+  if (!State.stats.ticketsProgress) {
+    State.stats.ticketsProgress = {};
+  }
+  // Используем answeredCount если передан, иначе correctCount
+  const progressCount = answeredCount !== null ? answeredCount : correctCount;
+  const percent = (progressCount / totalCount) * 100;
+  State.stats.ticketsProgress[ticketKey] = {
+    correct: correctCount,
+    answered: answeredCount !== null ? answeredCount : progressCount,
+    total: totalCount,
+    percent: percent,
+    completed: percent === 100 && correctCount === totalCount,
+    currentIndex: currentIndex !== null ? currentIndex : 0,
+    answers: answers || [],
+    questionOrder: questionOrder || []
+  };
+  saveUserStats();
+}
+
+function getTicketProgress(ticketKey) {
+  return State.stats.ticketsProgress?.[ticketKey] || null;
+}
+
+function saveTopicProgress(topicKey, correctCount, totalCount, answeredCount = null, currentIndex = null, answers = null, questionOrder = null) {
+  if (!State.stats.topicsProgress) {
+    State.stats.topicsProgress = {};
+  }
+  // Используем answeredCount если передан, иначе correctCount
+  const progressCount = answeredCount !== null ? answeredCount : correctCount;
+  const percent = (progressCount / totalCount) * 100;
+  State.stats.topicsProgress[topicKey] = {
+    correct: correctCount,
+    answered: answeredCount !== null ? answeredCount : progressCount,
+    total: totalCount,
+    percent: percent,
+    completed: percent === 100 && correctCount === totalCount,
+    currentIndex: currentIndex !== null ? currentIndex : 0,
+    answers: answers || [],
+    questionOrder: questionOrder || []
+  };
+  saveUserStats();
+}
+
+function getTopicProgress(topicKey) {
+  return State.stats.topicsProgress?.[topicKey] || null;
+}
+
+function getTicketsCompletedCount() {
+  if (!State.stats.ticketsProgress) return 0;
+  return Object.values(State.stats.ticketsProgress).filter(t => t.completed).length;
+}
+
+let statsRotationInterval = null;
+let currentStatsView = 0; // 0 = games, 1 = tickets
+
+async function updateStatsDisplay() {
+  // Сохраняем данные для топа при обновлении статистики
+  saveUserTopData();
+  
+  // Вычисляем место в топе (async)
+  try {
+    const players = await getAllPlayersTopData();
+    const currentUserId = getTelegramUserId();
+    if (currentUserId) {
+      // Приводим к числу для корректного сравнения
+      const userIdNum = typeof currentUserId === 'string' ? parseInt(currentUserId, 10) : currentUserId;
+      console.log("🔍 Поиск места в топе для userId:", userIdNum, "тип:", typeof userIdNum);
+      console.log("📊 Игроков в топе:", players.length);
+      
+      const userPlace = players.findIndex(p => {
+        const pUserId = typeof p.userId === 'string' ? parseInt(p.userId, 10) : p.userId;
+        return pUserId === userIdNum;
+      });
+      
+      console.log("📍 Найденное место:", userPlace);
+      
+      if (userPlace >= 0) {
+        State.stats.topPlace = userPlace + 1;
+        console.log("✅ Место в топе установлено:", State.stats.topPlace);
+      } else {
+        // Если пользователь не найден, проверяем почему
+        console.warn("⚠️ Пользователь не найден в топе. Проверяем причины...");
+        const userInList = players.some(p => {
+          const pUserId = typeof p.userId === 'string' ? parseInt(p.userId, 10) : p.userId;
+          return pUserId === userIdNum;
+        });
+        if (!userInList) {
+          console.warn("⚠️ Пользователь отсутствует в списке игроков из API");
+        }
+        State.stats.topPlace = null;
+      }
+    } else {
+      console.warn("⚠️ Не удалось получить Telegram userId");
+      State.stats.topPlace = null;
+    }
+  } catch(e) {
+    console.error("❌ Ошибка обновления места в топе:", e);
+    State.stats.topPlace = null;
+  }
+  
+  const gamesEl = qs("#games-played");
+  const levelEl = qs("#experience-level");
+  const topPlaceEl = qs("#top-place");
+  const gamesLabelEl = gamesEl?.parentElement?.querySelector('.stat-label');
+  
+  if (gamesEl) {
+    if (currentStatsView === 0) {
+      gamesEl.textContent = State.stats.gamesPlayed;
+      if (gamesLabelEl) gamesLabelEl.textContent = "игр сыграно";
+    } else {
+      gamesEl.textContent = State.stats.ticketsSolved;
+      if (gamesLabelEl) gamesLabelEl.textContent = "билетов решено";
+    }
+  }
+  
+  if (levelEl) {
+    // Вычисляем уровень на основе опыта (1 уровень = 100 опыта)
+    const level = Math.floor(State.stats.experience / 100) + 1;
+    State.stats.level = level;
+    // Опыт в текущем уровне = остаток от деления на 100
+    const expInCurrentLevel = State.stats.experience % 100;
+    // Опыт для следующего уровня = текущий уровень * 100
+    const expForNextLevel = level * 100;
+    levelEl.textContent = `${expInCurrentLevel}/${100} (Ур. ${level})`;
+  }
+  
+  if (topPlaceEl) {
+    topPlaceEl.textContent = State.stats.topPlace || "-";
+  }
+  
+  // Делаем карточку "Место в топе" кликабельной
+  const topPlaceCard = topPlaceEl?.closest('.stat-card-large');
+  if (topPlaceCard) {
+    topPlaceCard.style.cursor = 'pointer';
+    topPlaceCard.setAttribute('data-action', 'top');
+    // Обработчик клика уже есть в handleTap через делегацию
+  }
+}
+
+function startStatsRotation() {
+  if (statsRotationInterval) {
+    clearInterval(statsRotationInterval);
+  }
+  statsRotationInterval = setInterval(() => {
+    currentStatsView = currentStatsView === 0 ? 1 : 0;
+    updateStatsDisplay().catch(e => console.error("Ошибка обновления статистики:", e));
+  }, 3000); // Переключаем каждые 3 секунды
+}
+
+function addExperience(amount) {
+  State.stats.experience += amount;
+  updateStatsDisplay().catch(e => console.error("Ошибка обновления статистики:", e));
+  saveUserStats();
+}
+
+function incrementGamesPlayed() {
+  State.stats.gamesPlayed++;
+  updateStatsDisplay().catch(e => console.error("Ошибка обновления статистики:", e));
+  saveUserStats();
+  // Сохраняем данные пользователя для топа
+  saveUserTopData();
+}
+
+// Сохраняет данные пользователя для отображения в топе (даже если игр = 0)
+function saveUserTopData() {
+  try {
+    const user = getTelegramUser();
+    if (!user) {
+      // Если нет данных пользователя, все равно создаем запись для отображения в топе
+      const userId = getTelegramUserId();
+      if (!userId) return;
+      
+      const key = `pdd-duel-topdata-${userId}`;
+      const topData = {
+        userId: userId,
+        username: null,
+        firstName: null,
+        lastName: '',
+        photoUrl: null,
+        gamesPlayed: 0,
+        wins: 0,
+        losses: 0,
+        winRate: 0,
+        experience: 0,
+        level: 1,
+        lastUpdate: Date.now()
+      };
+      
+      localStorage.setItem(key, JSON.stringify(topData));
+      return;
+    }
+    
+    const userId = user.id;
+    const key = `pdd-duel-topdata-${userId}`;
+    const stats = State.stats;
+    
+    // Вычисляем винрейт (процент правильных ответов)
+    let winRate = 0;
+    let wins = 0;
+    let losses = 0;
+    
+    if (stats.gamesPlayed > 0) {
+      // Подсчитываем общее количество правильных ответов
+      let totalCorrect = 0;
+      let totalQuestions = 0;
+      
+      // Из билетов
+      if (stats.ticketsProgress) {
+        Object.values(stats.ticketsProgress).forEach(progress => {
+          if (progress.completed) {
+            totalCorrect += progress.correct || 0;
+            totalQuestions += progress.total || 0;
+          }
+        });
+      }
+      
+      // Из тем
+      if (stats.topicsProgress) {
+        Object.values(stats.topicsProgress).forEach(progress => {
+          if (progress.completed) {
+            totalCorrect += progress.correct || 0;
+            totalQuestions += progress.total || 0;
+          }
+        });
+      }
+      
+      if (totalQuestions > 0) {
+        winRate = Math.round((totalCorrect / totalQuestions) * 100);
+      }
+      
+      // Примерная оценка побед/поражений (можно улучшить при наличии данных о дуэлях)
+      wins = Math.floor(stats.gamesPlayed * (winRate / 100));
+      losses = stats.gamesPlayed - wins;
+    }
+    
+    const topData = {
+      userId: userId,
+      username: user.username,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      photoUrl: user.photoUrl,
+      gamesPlayed: stats.gamesPlayed || 0,
+      wins: wins,
+      losses: losses,
+      winRate: winRate,
+      experience: stats.experience || 0,
+      level: stats.level || 1,
+      lastUpdate: Date.now()
+    };
+    
+    localStorage.setItem(key, JSON.stringify(topData));
+  } catch(e) {
+    console.error("Ошибка сохранения данных для топа:", e);
+  }
+}
+
+// Собирает данные всех игроков для топа из API
+async function getAllPlayersTopData() {
+  try {
+    console.log("🔍 Запрос топа игроков с API:", `${API_BASE_URL}/api/top/players`);
+    
+    // Получаем данные ТОЛЬКО из API сервера (база данных бота)
+    // Добавляем cache: 'no-store' чтобы избежать проблем с кэшированием
+    // Добавляем timestamp для предотвращения кэширования
+    const timestamp = Date.now();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 секунд таймаут для fetch
+    
+    let response;
+    try {
+      response = await fetch(`${API_BASE_URL}/api/top/players?t=${timestamp}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        },
+        cache: 'no-store',
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+    } catch(fetchError) {
+      clearTimeout(timeoutId);
+      if (fetchError.name === 'AbortError') {
+        console.error("❌ Таймаут запроса к API (25 секунд)");
+        throw new Error("Таймаут запроса к API");
+      }
+      throw fetchError;
+    }
+    
+    console.log("📡 Ответ API:", response.status, response.statusText);
+    
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Не удалось прочитать ошибку');
+      console.error("❌ Ошибка API:", response.status, errorText);
+      throw new Error(`API вернул ошибку ${response.status}: ${errorText}`);
+    }
+    
+    const data = await response.json();
+    console.log("📦 Данные от API:", data);
+    
+    if (!data.success) {
+      console.error("❌ API вернул ошибку:", data.error || "Неизвестная ошибка");
+      throw new Error(data.error || "Неизвестная ошибка API");
+    }
+    
+    if (!data.players || !Array.isArray(data.players)) {
+      console.error("❌ API вернул некорректные данные:", data);
+      throw new Error("Некорректные данные от API");
+    }
+    
+    console.log(`✅ Получено ${data.players.length} игроков из API`);
+    
+    // Преобразуем данные из API в формат для отображения
+    let players = data.players.map(player => {
+      // Логируем для отладки
+      console.log("📊 Игрок из API:", {
+        userId: player.user_id,
+        username: player.username,
+        first_name: player.first_name,
+        photo_url: player.photo_url
+      });
+      
+      // Приводим user_id к числу для единообразия
+      const userId = typeof player.user_id === 'string' ? parseInt(player.user_id, 10) : player.user_id;
+      
+      return {
+        userId: userId,
+        username: player.username || '',  // Убеждаемся что это не null/undefined
+        firstName: player.first_name || '',  // Убеждаемся что это не null/undefined
+        lastName: '',
+        photoUrl: (player.photo_url && player.photo_url.trim() && player.photo_url !== 'null') ? player.photo_url.trim() : null, // Фото из базы данных
+        hideUsername: player.hide_username || false, // Настройка скрытия юзернейма из сервера
+        gamesPlayed: player.total_games || 0,
+        wins: player.wins || 0,
+        losses: player.losses || 0,
+        winRate: player.win_rate || 0,
+        experience: 0,
+        level: 1,
+        lastUpdate: Date.now()
+      };
+    });
+    
+    // Сохраняем обновленные данные в локальный кэш
+    savePlayersToLocalCache(players);
+    
+    // НЕ фильтруем на клиенте - фильтрация происходит на сервере в SQL запросе
+    
+    // Сортируем: сначала по винрейту (убывание), потом по количеству игр (убывание), потом по ID (возрастание)
+    players.sort((a, b) => {
+      // Сначала игроки с играми
+      if (a.gamesPlayed > 0 && b.gamesPlayed === 0) return -1;
+      if (a.gamesPlayed === 0 && b.gamesPlayed > 0) return 1;
+      
+      // Если оба играли или оба не играли
+      if (a.gamesPlayed > 0 && b.gamesPlayed > 0) {
+        // Сначала по винрейту
+        if (b.winRate !== a.winRate) return b.winRate - a.winRate;
+        // Потом по количеству игр
+        if (b.gamesPlayed !== a.gamesPlayed) return b.gamesPlayed - a.gamesPlayed;
+      }
+      
+      // В конце по ID (для стабильной сортировки)
+      return a.userId - b.userId;
+    });
+    
+    return players;
+  } catch(apiError) {
+    console.error("❌ Ошибка получения топа из API:", apiError);
+    // Пробрасываем ошибку наверх
+    throw apiError;
+  }
+}
+
+async function updateOnlineCount() {
+  // Онлайн счетчик отключен - нужен реальный API
+}
+
+/* =======================
+   Карусель
+======================= */
+let carouselInitialized = false;
+let currentCarouselSlide = 0;
+let carouselAutoPlayInterval = null;
+
+function initCarousel() {
+  if (carouselInitialized) return;
+  
+  const slides = qsa(".carousel-slide");
+  const dots = qsa(".carousel-dot");
+  const prevBtn = qs(".carousel-arrow-prev");
+  const nextBtn = qs(".carousel-arrow-next");
+  
+  if (!slides.length || !dots.length) return;
+  
+  function updateCarousel(index) {
+    // Обновляем слайды
+    slides.forEach((slide, i) => {
+      slide.classList.toggle("active", i === index);
+    });
+    
+    // Обновляем точки
+    dots.forEach((dot, i) => {
+      dot.classList.toggle("active", i === index);
+    });
+    
+    currentCarouselSlide = index;
+  }
+  
+  function nextSlide() {
+    const next = (currentCarouselSlide + 1) % slides.length;
+    updateCarousel(next);
+  }
+  
+  function prevSlide() {
+    const prev = (currentCarouselSlide - 1 + slides.length) % slides.length;
+    updateCarousel(prev);
+  }
+  
+  // Обработчики для стрелок
+  if (prevBtn) {
+    prevBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      prevSlide();
+      resetAutoPlay();
+    }, { passive: false });
+  }
+  
+  if (nextBtn) {
+    nextBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      nextSlide();
+      resetAutoPlay();
+    }, { passive: false });
+  }
+  
+  // Обработчики для точек
+  dots.forEach((dot, index) => {
+    dot.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      updateCarousel(index);
+      resetAutoPlay();
+    }, { passive: false });
+  });
+  
+  // Автоматическое листание (каждые 5 секунд)
+  function startAutoPlay() {
+    carouselAutoPlayInterval = setInterval(() => {
+      nextSlide();
+    }, 5000);
+  }
+  
+  function resetAutoPlay() {
+    if (carouselAutoPlayInterval) {
+      clearInterval(carouselAutoPlayInterval);
+    }
+    startAutoPlay();
+  }
+  
+  // Свайпы для мобильных устройств
+  let touchStartX = 0;
+  let touchEndX = 0;
+  
+  const carouselContainer = qs(".carousel-container");
+  if (carouselContainer) {
+    carouselContainer.addEventListener("touchstart", (e) => {
+      touchStartX = e.changedTouches[0].screenX;
+    }, { passive: true });
+    
+    carouselContainer.addEventListener("touchend", (e) => {
+      touchEndX = e.changedTouches[0].screenX;
+      handleSwipe();
+      resetAutoPlay();
+    }, { passive: true });
+  }
+  
+  function handleSwipe() {
+    const swipeThreshold = 50;
+    if (touchEndX < touchStartX - swipeThreshold) {
+      nextSlide();
+    }
+    if (touchEndX > touchStartX + swipeThreshold) {
+      prevSlide();
+    }
+  }
+  
+  // Инициализация
+  updateCarousel(0);
+  startAutoPlay();
+  carouselInitialized = true;
+}
+ 
+ /* =======================
+    Делегация событий
+ ======================= */
+function bindDelegation(){
+  if (delegationBound) return;
+  document.addEventListener("click", handleClick, { passive: false });
+  document.addEventListener("pointerdown", handlePointerDown, { passive: true });
+  document.addEventListener("pointermove", handlePointerMove, { passive: true });
+  document.addEventListener("pointerup", handlePointerUp, { passive: true });
+  document.addEventListener("pointercancel", handlePointerCancel, { passive: true });
+  delegationBound = true;
+}
+
+function handleTap(e){
+  // Проверяем клик на "Место в топе" (data-action="top")
+  const topCard = e.target.closest('[data-action="top"]');
+  if (topCard) {
+    e.preventDefault();
+    e.stopPropagation();
+    uiTopPlayers().catch(e => console.error("Ошибка загрузки топа:", e));
+    return;
+  }
+  
+  // Проверяем темы ПЕРВЫМИ, до проверки ответов
+  const topic = e.target.closest("[data-t]");
+  if (topic && !topic.hasAttribute("data-i")){ 
+    e.preventDefault(); 
+    e.stopPropagation();
+    startDuel({mode:"topic", topic: topic.dataset.t}); 
+    return; 
+  }
+  const ticket = e.target.closest("[data-ticket]");
+  if (ticket){ 
+    e.preventDefault(); 
+    e.stopPropagation();
+    startTicket(ticket.dataset.ticket); 
+    return; 
+  }
+  const back = e.target.closest("[data-back]");
+  if (back){ 
+    e.preventDefault(); 
+    e.stopPropagation();
+    // Проверяем, где мы находимся
+    const d = State.duel;
+    const titleEl = qs(".subpage-title");
+    const currentTitle = titleEl ? titleEl.textContent.trim() : "";
+    
+    // Проверяем, есть ли элементы вопроса на экране (значит мы в активном вопросе билета)
+    const hasQuestionElements = qs(".question-progress") || qs(".question-tracker");
+    
+    // Если мы в активном вопросе билета (режим ticket + есть элементы вопроса), возвращаемся к списку билетов
+    if (d && d.mode === "ticket" && hasQuestionElements) {
+      uiTickets();
+    }
+    // Если мы в активном вопросе темы (режим topic + есть элементы вопроса), возвращаемся к списку тем
+    else if (d && d.mode === "topic" && hasQuestionElements) {
+      uiTopics();
+    }
+    // Если мы в настройках, проверяем контекст
+    else if (currentTitle === "Настройки") {
+      const host = qs("#screen");
+      const context = host?.getAttribute('data-settings-context');
+      if (context === "tickets") {
+        uiTickets();
+      } else {
+        renderHome();
+      }
+    }
+    // Если мы в списке билетов (title = "Билеты" и нет элементов вопроса), возвращаемся на главную
+    else if (currentTitle === "Билеты" && !hasQuestionElements) {
+      renderHome();
+    }
+    // Если мы в списке тем (title = "Темы" и нет элементов вопроса), возвращаемся на главную
+    else if (currentTitle === "Темы" && !hasQuestionElements) {
+      renderHome();
+    }
+    // Если мы в топе игроков, возвращаемся на главную
+    else if (currentTitle === "Топ игроков") {
+      renderHome();
+    }
+    // Во всех остальных случаях возвращаемся на главную
+    else {
+      renderHome();
+    }
+    return; 
+  }
+  const dot = e.target.closest("[data-question]");
+  if (dot){
+    e.preventDefault();
+    e.stopPropagation();
+    if (dot.disabled) return;
+    goToQuestion(+dot.dataset.question);
+    return;
+  }
+  if (e.target.closest("[data-prev]")){
+    e.preventDefault();
+    e.stopPropagation();
+    previousQuestion();
+    return;
+  }
+  if (e.target.closest("[data-next]")){
+    e.preventDefault();
+    e.stopPropagation();
+    nextQuestion();
+    return;
+  }
+  if (e.target.closest("[data-finish]")){
+    e.preventDefault();
+    e.stopPropagation();
+    finishDuel();
+    return;
+  }
+  if (e.target.id === "again"){ 
+    e.preventDefault();
+    e.stopPropagation();
+    const currentDuel = State.duel;
+    if (currentDuel && currentDuel.mode === "duel") {
+      // Если это была дуэль, возвращаемся к поиску
+      startDuelSearch();
+    } else if (currentDuel && currentDuel.topic){
+      startDuel({ mode: "topic", topic: currentDuel.topic });
+    } else {
+      startDuel({ mode: "quick" });
+    }
+    return;
+  }
+  if (e.target.id === "home"){ 
+    e.preventDefault(); 
+    e.stopPropagation();
+    renderHome(); 
+    return; 
+  }
+  // Проверяем ответы ТОЛЬКО если есть data-i
+  const answer = e.target.closest("button.answer[data-i]");
+  if (answer && answer.hasAttribute("data-i") && !answer.hasAttribute("data-t")){
+    e.preventDefault();
+    e.stopPropagation();
+    const index = parseInt(answer.dataset.i);
+    if (!isNaN(index)){
+      onAnswer(index);
+    }
+    return;
+  }
+}
+ 
+ function handlePointerDown(e){
+   if (e.pointerType !== "touch") return;
+   State.tap = {
+     pointerId: e.pointerId,
+     target: getActionTarget(e.target),
+     startX: e.clientX,
+     startY: e.clientY,
+     moved: false,
+   };
+ }
+ 
+ function handlePointerMove(e){
+   const tap = State.tap;
+   if (!tap || e.pointerId !== tap.pointerId) return;
+   if (Math.abs(e.clientX - tap.startX) > 12 || Math.abs(e.clientY - tap.startY) > 12) {
+     tap.moved = true;
+   }
+ }
+ 
+ function handlePointerUp(e){
+  if (e.pointerType !== "touch") return;
+  const tap = State.tap;
+  if (!tap || e.pointerId !== tap.pointerId) return;
+  if (!tap.moved && tap.target) {
+    handleTap({ target: tap.target, preventDefault: ()=>{}, currentTarget: tap.target });
+  }
+  State.tap = null;
+}
+
+function handlePointerCancel(){
+  State.tap = null;
+}
+
+function handleClick(e){
+   if (State.ignoreClickUntil && Date.now() < State.ignoreClickUntil) {
+     return;
+   }
+   // Проверяем клик на "Место в топе" ПЕРЕД handleTap
+   const topCard = e.target.closest('[data-action="top"]');
+   if (topCard) {
+     e.preventDefault();
+     e.stopPropagation();
+     uiTopPlayers();
+     return;
+   }
+   handleTap(e);
+ }
+ 
+ function getActionTarget(el){
+   if (!el) return null;
+   return el.closest("button.answer,[data-ticket],[data-t],[data-question],[data-prev],[data-next],[data-finish],#again,#home");
+ }
+ 
+ /* =======================
+    Загрузка билетов
+ ======================= */
+async function loadTickets(){
+  // Общий таймаут для всей функции (30 секунд максимум)
+  const overallTimeout = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error("Общий таймаут загрузки билетов")), 30000);
+  });
+
+  const loadTask = async () => {
+    let manifest = null;
+    try {
+      manifest = await fetchJson(MANIFEST_URL);
+    } catch(err){
+      console.warn("⚠️ Не удалось загрузить manifest, используем запасной список", err);
+    }
+
+    const manifestTickets = (manifest && Array.isArray(manifest.tickets)) ? manifest.tickets : [];
+    const ticketFiles = uniqueStrings([
+      ...manifestTickets,
+      ...FALLBACK_MANIFEST.tickets
+    ]);
+    if(!ticketFiles.length){
+      console.warn("⚠️ Нет списка билетов для загрузки");
+      return;
+    }
+
+    const raw = [];
+    let loaded = 0;
+    let successes = 0;
+    let failures = 0;
+    const total = ticketFiles.length;
+    const maxFailures = Math.ceil(total * 0.7); // Если больше 70% файлов не загрузилось, прекращаем
+
+    // Обновляем прогресс загрузки
+    const updateProgress = () => {
+      const percent = 20 + Math.floor((loaded / total) * 70);
+      updateLoaderProgress(percent);
+    };
+
+    // Ограничиваем количество одновременных загрузок
+    const maxConcurrent = 5;
+    const chunks = [];
+    for (let i = 0; i < ticketFiles.length; i += maxConcurrent) {
+      chunks.push(ticketFiles.slice(i, i + maxConcurrent));
+    }
+
+    for (const chunk of chunks) {
+      if(failures > maxFailures && raw.length === 0){
+        console.warn("⚠️ Слишком много ошибок загрузки, переключаемся на fallback");
+        break;
+      }
+
+      // Загружаем чанк параллельно, но с ограничением
+      await Promise.allSettled(chunk.map(async (file) => {
+        const url = `questions/${encodePath(file)}`;
+        try {
+          const response = await fetchWithTimeout(url, { cache:"no-store" }, 2000); // Уменьшил таймаут до 2 секунд
+          if(!response.ok) throw new Error(`HTTP ${response.status}`);
+
+          const payload = await response.json();
+          const list = Array.isArray(payload) ? payload : (payload.questions || payload.list || payload.data || []);
+          const ticketLabel = extractTicketLabel(file);
+          for(const item of list){
+            raw.push({ ...item, __ticketLabel: ticketLabel });
+          }
+          successes++;
+          loaded++;
+          updateProgress();
+        } catch(err) {
+          console.warn("Не удалось загрузить " + file + ":", err);
+          failures++;
+          loaded++;
+          updateProgress();
+        }
+      }));
+    }
+
+    if (raw.length > 0) {
+      const normalized = normalizeQuestions(raw);
+      applyQuestions(normalized, "remote");
+    } else {
+      // Если ничего не загрузилось, используем fallback
+      console.log("📦 Ничего не загружено, применяем fallback данные");
+    }
+  };
+
+  try {
+    await Promise.race([loadTask(), overallTimeout]);
+  } catch(err) {
+    console.warn("⚠️ Превышен общий таймаут загрузки билетов:", err);
+  }
+}
+
+async function loadPenalties(){
+  let text = "";
+  try {
+    const response = await fetchWithTimeout(PENALTIES_URL, { cache:"no-store" }, 10000);
+    if(response.ok) {
+      text = await response.text();
+    }
+  } catch(err) {
+    console.warn("Не удалось загрузить штрафы:", err);
+  }
+   const lines = text.split(/\n+/).map(line=>line.trim()).filter(Boolean);
+   const items = [];
+   for(const line of lines){
+     try {
+       const obj = JSON.parse(line);
+       items.push({
+         articlePart: obj.article_part || obj.articlePart || "—",
+         text: obj.text || "",
+         penalty: obj.penalty || ""
+       });
+     } catch(err){
+       console.error("Не удалось разобрать штраф:", err, line);
+     }
+   }
+   items.sort((a,b)=>a.articlePart.localeCompare(b.articlePart,'ru',{numeric:true,sensitivity:'base'}));
+   State.penalties = items;
+   return items;
+ }
+ 
+ /* =======================
+    Нормализация данных
+ ======================= */
+ function normalizeQuestions(raw){
+   const out=[];
+   for(const q of raw){
+    const answersRaw = Array.isArray(q.answers) ? q.answers : (Array.isArray(q.variants) ? q.variants : (Array.isArray(q.options) ? q.options : []));
+    const answers = answersRaw.map(a => {
+      if (a && typeof a === "object"){
+        if (Object.prototype.hasOwnProperty.call(a, "answer_text") && a.answer_text != null) return a.answer_text;
+        if (Object.prototype.hasOwnProperty.call(a, "text") && a.text != null) return a.text;
+        if (Object.prototype.hasOwnProperty.call(a, "title") && a.title != null) return a.title;
+      }
+      return String(a != null ? a : "");
+    });
+ 
+    let correctIndex = answersRaw.findIndex(a => a && typeof a === "object" && a.is_correct === true);
+     if (correctIndex < 0 && typeof q.correct_answer === "string"){
+       const m = q.correct_answer.match(/\d+/);
+       if (m) correctIndex = parseInt(m[0]) - 1;
+     }
+     if (correctIndex < 0) correctIndex = 0;
+ 
+     const ticketLabel = deriveTicketLabel(q);
+     const ticketNumber = deriveTicketNumber(ticketLabel);
+     const ticketKey = ticketLabel || (ticketNumber ? `Билет ${ticketNumber}` : `ticket-${out.length}`);
+ 
+     const image = normalizeImagePath(q.image);
+ 
+     out.push({
+       question: q.question || q.title || "Вопрос",
+       answers,
+       correctIndex,
+       tip: q.answer_tip || q.tip || "",
+       ticketNumber,
+       ticketLabel,
+       ticketKey,
+       topics: Array.isArray(q.topic) ? q.topic : q.topic ? [q.topic] : [],
+       image
+     });
+   }
+   return out;
+ }
+ 
+function resetQuestionState(){
+  State.pool.length = 0;
+  State.byTicket.clear();
+  State.topics.clear();
+}
+
+function hydrateFallback(options = {}){
+  if (options.reset) {
+    resetQuestionState();
+  }
+  
+  if (!FALLBACK_QUESTION_BANK || !Array.isArray(FALLBACK_QUESTION_BANK) || FALLBACK_QUESTION_BANK.length === 0) {
+    console.warn("FALLBACK_QUESTION_BANK не определен или пуст");
+    return;
+  }
+  
+  const normalized = normalizeQuestions(FALLBACK_QUESTION_BANK);
+  applyQuestions(normalized, "fallback");
+  return normalized;
+}
+
+function applyQuestions(norm, source = "remote"){
+  // Не очищаем данные, если новых данных нет или их меньше
+  if (!norm || norm.length === 0) {
+    console.warn("⚠️ Попытка применить пустые данные, пропускаем");
+    return;
+  }
+  // Если уже есть fallback данные и новые данные не лучше, не заменяем
+  if (source === "remote" && State.usedFallback && norm.length < State.pool.length) {
+    console.warn("⚠️ Новые данные меньше текущих, сохраняем существующие");
+    return;
+  }
+  resetQuestionState();
+  ingestQuestions(norm);
+  State.usedFallback = source === "fallback";
+}
+ 
+ function ingestQuestions(norm){
+   for(const q of norm){
+     State.pool.push(q);
+     const bucketKey = q.ticketKey;
+     if (!State.byTicket.has(bucketKey)){
+      const orderValue = Number.isFinite(q.ticketNumber) ? q.ticketNumber : Number.MAX_SAFE_INTEGER;
+      State.byTicket.set(bucketKey, { label: q.ticketLabel, order: orderValue, questions: [] });
+     }
+     const bucket = State.byTicket.get(bucketKey);
+     bucket.order = Math.min(bucket.order, Number.isFinite(q.ticketNumber) ? q.ticketNumber : Number.MAX_SAFE_INTEGER);
+     bucket.questions.push(q);
+ 
+     for(const t of q.topics){
+       if (!State.topics.has(t)) State.topics.set(t, []);
+       State.topics.get(t).push(q);
+     }
+   }
+ }
+ 
+ function deriveTicketLabel(q){
+   if (typeof q.ticket_number === "string" && q.ticket_number.trim()) return q.ticket_number.trim();
+   if (typeof q.ticket === "string" && q.ticket.trim()) return q.ticket.trim();
+   if (typeof q.__bucket === "string" && q.__bucket.trim()) return q.__bucket.trim();
+   if (typeof q.ticket === "number" && Number.isFinite(q.ticket)) return `Билет ${q.ticket}`;
+   return "Билет";
+ }
+ 
+ function deriveTicketNumber(label){
+   if (typeof label !== "string") return undefined;
+   const match = label.match(/\d+/);
+   if (!match) return undefined;
+   const value = parseInt(match[0], 10);
+   return Number.isFinite(value) ? value : undefined;
+ }
+ 
+ function uniqueStrings(items){
+   const seen = new Set();
+   const out = [];
+   for(const item of items){
+     if (typeof item !== "string") continue;
+     const normalized = item.trim();
+     if(!normalized || seen.has(normalized)) continue;
+     seen.add(normalized);
+     out.push(normalized);
+   }
+   return out;
+ }
+ 
+ function encodePath(path){
+   return path.split("/").map(encodeURIComponent).join("/");
+ }
+ 
+ function extractTicketLabel(path){
+   const fileName = path.split("/").pop() || "";
+   const plain = fileName.replace(/\.json$/i, "");
+   return plain.replace(/_/g, " ") || "Билет";
+ }
+ 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 10000){
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timeoutId);
+    return response;
+  } catch(err) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      throw new Error(`Request timeout: ${url}`);
+    }
+    throw err;
+  }
+}
+
+async function fetchJson(url){
+  const response = await fetchWithTimeout(url, { cache:"no-store" }, 3000); // Уменьшил таймаут до 3 секунд
+  if(!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
+}
+ 
+ function normalizeImagePath(path){
+  const raw = path == null ? "" : path.toString().trim();
+   if(!raw) return "";
+   const withoutDots = raw.replace(/^\.\//, "").replace(/^\/+/, "");
+   if(/^https?:/i.test(raw)) return raw;
+   if(/^https?:/i.test(withoutDots)) return withoutDots;
+   if(!withoutDots) return "";
+   if(withoutDots.startsWith("images/")) return withoutDots;
+   return `images/${withoutDots}`;
+ }
+ 
+/* =======================
+   Экраны
+======================= */
+function uiMainSettings(){
+  const hideFromTop = State.settings.hideFromTop || false;
+  const hideUsername = State.settings.hideUsername || false;
+  
+  setView(`
+    <div class="card">
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <label style="display: flex; align-items: center; justify-content: space-between; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); cursor: pointer; background: var(--bg-card); transition: all var(--transition);" for="setting-hide-from-top" class="settings-toggle-label-main">
+          <span style="font-weight: 500; font-size: 15px; color: var(--text);">Не показывать меня в топе</span>
+          <div style="position: relative; width: 48px; height: 26px; background: ${hideFromTop ? 'var(--accent)' : 'var(--border)'}; border-radius: 13px; transition: all var(--transition); cursor: pointer;">
+            <div style="position: absolute; top: 2px; left: ${hideFromTop ? '24px' : '2px'}; width: 22px; height: 22px; background: white; border-radius: 50%; transition: all 0.2s ease; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></div>
+          </div>
+          <input type="checkbox" id="setting-hide-from-top" ${hideFromTop ? 'checked' : ''} style="position: absolute; opacity: 0; pointer-events: none;" />
+        </label>
+        <label style="display: flex; align-items: center; justify-content: space-between; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); cursor: pointer; background: var(--bg-card); transition: all var(--transition);" for="setting-hide-username" class="settings-toggle-label-username">
+          <span style="font-weight: 500; font-size: 15px; color: var(--text);">Скрыть юзернейм</span>
+          <div style="position: relative; width: 48px; height: 26px; background: ${hideUsername ? 'var(--accent)' : 'var(--border)'}; border-radius: 13px; transition: all var(--transition); cursor: pointer;">
+            <div style="position: absolute; top: 2px; left: ${hideUsername ? '24px' : '2px'}; width: 22px; height: 22px; background: white; border-radius: 50%; transition: all 0.2s ease; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></div>
+          </div>
+          <input type="checkbox" id="setting-hide-username" ${hideUsername ? 'checked' : ''} style="position: absolute; opacity: 0; pointer-events: none;" />
+        </label>
+      </div>
+    </div>
+  `, { subpage: true, title: "Настройки" });
+  
+  scheduleFrame(() => {
+    const checkbox = qs("#setting-hide-from-top");
+    const label = qs(".settings-toggle-label-main");
+    const checkboxUsername = qs("#setting-hide-username");
+    const labelUsername = qs(".settings-toggle-label-username");
+    
+    if (checkbox && label) {
+      label.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        checkbox.checked = !checkbox.checked;
+        State.settings.hideFromTop = checkbox.checked;
+        saveUserSettings();
+        
+        const toggle = label.querySelector("div > div");
+        const toggleBg = label.querySelector("div");
+        if (toggle && toggleBg) {
+          toggle.style.left = checkbox.checked ? '24px' : '2px';
+          toggleBg.style.background = checkbox.checked ? 'var(--accent)' : 'var(--border)';
+        }
+        
+        // Обновляем место в топе
+        updateStatsDisplay().catch(e => console.error("Ошибка обновления статистики:", e));
+        
+        // Очищаем кэш топа после изменения настройки
+        const cacheKey = "pdd-duel-top-players-cache";
+        localStorage.removeItem(cacheKey);
+        console.log("🗑️ Кэш топа очищен после изменения hideFromTop");
+        
+        // Показываем уведомление пользователю
+        toast(checkbox.checked 
+          ? "✅ Вы скрыты из топа. Обновите топ, чтобы увидеть изменения." 
+          : "✅ Вы снова видимы в топе. Обновите топ, чтобы увидеть изменения.", 3000);
+      }, { passive: true });
+    }
+    
+    if (checkboxUsername && labelUsername) {
+      labelUsername.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        checkboxUsername.checked = !checkboxUsername.checked;
+        State.settings.hideUsername = checkboxUsername.checked;
+        saveUserSettings();
+        
+        const toggle = labelUsername.querySelector("div > div");
+        const toggleBg = labelUsername.querySelector("div");
+        if (toggle && toggleBg) {
+          toggle.style.left = checkboxUsername.checked ? '24px' : '2px';
+          toggleBg.style.background = checkboxUsername.checked ? 'var(--accent)' : 'var(--border)';
+        }
+      }, { passive: true });
+    }
+  });
+}
+
+async function uiTopPlayers(){
+  // Показываем загрузку
+  setView(`
+    <div class="card">
+      <p style="text-align: center; color: var(--muted);">Загрузка топа игроков...</p>
+    </div>
+  `, { subpage: true, title: "Топ игроков" });
+  
+  // Принудительно регистрируем текущего пользователя в API
+  const currentUserId = getTelegramUserId();
+  if (currentUserId) {
+    console.log("🔄 Регистрация пользователя перед загрузкой топа:", currentUserId);
+    // Регистрируем синхронно, ждем результат
+    try {
+      await registerUserInAPI();
+      console.log("✅ Пользователь зарегистрирован");
+      // Небольшая задержка для сохранения в БД
+      await new Promise(resolve => setTimeout(resolve, 300));
+    } catch(e) {
+      console.warn("⚠️ Ошибка регистрации:", e);
+    }
+  }
+  
+  // Запрашиваем данные из API
+  let players = [];
+  let apiError = null;
+  
+  try {
+    console.log("📡 Запрос топа игроков из API...");
+    const timestamp = Date.now();
+    const response = await fetch(`${API_BASE_URL}/api/top/players?t=${timestamp}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      },
+      cache: 'no-store'
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Не удалось прочитать ошибку');
+      throw new Error(`API вернул ошибку ${response.status}: ${errorText}`);
+    }
+    
+    const data = await response.json();
+    
+    if (!data.success) {
+      throw new Error(data.error || "Неизвестная ошибка API");
+    }
+    
+    if (!data.players || !Array.isArray(data.players)) {
+      throw new Error("Некорректные данные от API");
+    }
+    
+    // Преобразуем данные
+    players = data.players.map(player => {
+      const userId = typeof player.user_id === 'string' ? parseInt(player.user_id, 10) : player.user_id;
+      return {
+        userId: userId,
+        username: player.username || '',
+        firstName: player.first_name || '',
+        lastName: '',
+        photoUrl: (player.photo_url && player.photo_url.trim() && player.photo_url !== 'null') ? player.photo_url.trim() : null,
+        hideUsername: player.hide_username || false,
+        gamesPlayed: player.total_games || 0,
+        wins: player.wins || 0,
+        losses: player.losses || 0,
+        winRate: player.win_rate || 0,
+        experience: 0,
+        level: 1
+      };
+    });
+    
+    // Сортируем
+    players.sort((a, b) => {
+      if (a.gamesPlayed > 0 && b.gamesPlayed === 0) return -1;
+      if (a.gamesPlayed === 0 && b.gamesPlayed > 0) return 1;
+      if (a.gamesPlayed > 0 && b.gamesPlayed > 0) {
+        if (b.winRate !== a.winRate) return b.winRate - a.winRate;
+        if (b.gamesPlayed !== a.gamesPlayed) return b.gamesPlayed - a.gamesPlayed;
+      }
+      return a.userId - b.userId;
+    });
+    
+    console.log(`✅ Получено ${players.length} игроков из API`);
+  } catch(e) {
+    console.error("❌ Ошибка загрузки топа из API:", e);
+    apiError = e;
+    players = [];
+  }
+  
+  // Отображаем топ
+  displayTopPlayers(players, apiError);
+}
+
+// Отображает топ игроков
+async function displayTopPlayers(players, apiError = null) {
+  if (!players || players.length === 0) {
+    // Проверяем, что API вообще доступен
+    let apiStatus = '⏳ Проверка...';
+    let healthCheckOk = false;
+    try {
+      const healthController = new AbortController();
+      const healthTimeout = setTimeout(() => healthController.abort(), 5000);
+      const apiCheck = await fetch(`${API_BASE_URL}/health`, { 
+        method: 'GET',
+        signal: healthController.signal
+      }).catch(() => null);
+      clearTimeout(healthTimeout);
+      healthCheckOk = apiCheck ? apiCheck.ok : false;
+      apiStatus = healthCheckOk ? '✅ API работает' : (apiCheck ? `❌ API ошибка ${apiCheck.status}` : '❌ API недоступен');
+    } catch(e) {
+      apiStatus = `❌ Ошибка: ${e.message}`;
+    }
+    
+    // Проверяем настройки скрытия из топа
+    const currentUserId = getTelegramUserId();
+    let hideFromTopInfo = '';
+    if (currentUserId) {
+      const settingsKey = `pdd-duel-settings-${currentUserId}`;
+      const settings = localStorage.getItem(settingsKey);
+      if (settings) {
+        try {
+          const userSettings = JSON.parse(settings);
+          if (userSettings.hideFromTop) {
+            hideFromTopInfo = '<p style="font-size: 11px; color: #ff6b6b; margin-top: 8px; font-weight: 600;">⚠️ У вас включена опция "Не показывать меня в топе"</p>';
+          }
+        } catch(e) {
+          console.warn("Ошибка парсинга настроек:", e);
+        }
+      }
+    }
+    
+    setView(`
+      <div class="card">
+        <p style="text-align: center; color: var(--muted); margin-bottom: 12px; font-weight: 600;">Пока нет игроков в топе</p>
+        <div style="padding: 12px; background: rgba(255, 193, 7, 0.1); border-radius: 8px; margin-top: 12px;">
+          <p style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">${apiStatus}</p>
+          <p style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">URL: ${API_BASE_URL}/api/top/players</p>
+          ${hideFromTopInfo}
+          <p style="font-size: 11px; color: var(--muted); margin-top: 8px;">💡 Убедитесь, что:</p>
+          <ul style="font-size: 11px; color: var(--muted); margin: 8px 0; padding-left: 20px;">
+            <li>Пользователи зарегистрированы (откройте приложение, регистрация происходит автоматически)</li>
+            <li>API сервер работает и доступен</li>
+            <li>База данных содержит пользователей</li>
+            <li>У вас не включена опция "Не показывать меня в топе" в настройках</li>
+          </ul>
+          <button class="btn" id="retry-top" style="margin-top: 12px; width: 100%; padding: 10px; background: var(--accent); color: white; border: none; border-radius: var(--radius-md); font-weight: 600; cursor: pointer;">🔄 Попробовать снова</button>
+          <button class="btn" id="force-register" style="margin-top: 8px; width: 100%; padding: 10px; background: #28a745; color: white; border: none; border-radius: var(--radius-md); font-weight: 600; cursor: pointer;">📝 Зарегистрировать меня в API</button>
+        </div>
+      </div>
+    `, { subpage: true, title: "Топ игроков" });
+    
+    // Добавляем обработчики кнопок
+    scheduleFrame(() => {
+      const retryBtn = qs("#retry-top");
+      if (retryBtn) {
+        retryBtn.addEventListener("click", () => {
+          uiTopPlayers();
+        }, { passive: true });
+      }
+      
+      const forceRegisterBtn = qs("#force-register");
+      if (forceRegisterBtn) {
+        forceRegisterBtn.addEventListener("click", async () => {
+          forceRegisterBtn.disabled = true;
+          forceRegisterBtn.textContent = "⏳ Регистрация...";
+          try {
+            await registerUserInAPI();
+            toast("✅ Регистрация завершена. Обновляю топ...", 2000);
+            setTimeout(() => {
+              uiTopPlayers();
+            }, 1000);
+          } catch(e) {
+            toast(`❌ Ошибка регистрации: ${e.message}`, 3000);
+            forceRegisterBtn.disabled = false;
+            forceRegisterBtn.textContent = "📝 Зарегистрировать меня в API";
+          }
+        }, { passive: true });
+      }
+    });
+    
+    return;
+  }
+  
+  const currentUserId = getTelegramUserId();
+  
+  // Проверяем настройки для текущего пользователя
+  const hideUsername = State.settings.hideUsername || false;
+  
+  // НЕ фильтруем на клиенте - фильтрация hide_from_top происходит на сервере в SQL запросе
+  // Сервер уже исключил пользователей с hide_from_top = 1 из результата
+  const filteredPlayers = players;
+  
+  const playersHtml = filteredPlayers.map((player, index) => {
+    const isCurrentUser = currentUserId && player.userId === currentUserId;
+    const place = index + 1;
+    const medal = place === 1 ? '🥇' : place === 2 ? '🥈' : place === 3 ? '🥉' : `${place}.`;
+    
+    // Получаем имя пользователя из Telegram (username или first_name)
+    // Логируем для отладки
+    console.log("👤 Обработка игрока:", {
+      userId: player.userId,
+      username: player.username,
+      firstName: player.firstName,
+      photoUrl: player.photoUrl
+    });
+    
+    let displayName = '';
+    // Проверяем настройку скрытия юзернейма из сервера (для всех пользователей)
+    const shouldHideUsername = player.hideUsername || false;
+    
+    if (shouldHideUsername) {
+      // Скрываем юзернейм - показываем только first_name или "User"
+      if (player.firstName && player.firstName.trim()) {
+        displayName = player.firstName.trim();
+      } else {
+        displayName = "User";
+      }
+    } else {
+      // Обычная логика отображения имени
+      if (player.username && player.username.trim()) {
+        displayName = `@${player.username.trim()}`;
+      } else if (player.firstName && player.firstName.trim()) {
+        // Если нет username, используем first_name
+        displayName = player.firstName.trim();
+      } else {
+        // Если нет никаких данных, используем ID
+        displayName = `ID: ${player.userId}`;
+        console.warn("⚠️ Нет данных пользователя для ID:", player.userId);
+      }
+    }
+    
+    // Формируем ссылку на профиль пользователя (только если юзернейм не скрыт)
+    const profileLink = !shouldHideUsername && player.username && player.username.trim() 
+      ? `https://t.me/${player.username.trim()}`
+      : null;
+    
+    return `
+      <div class="card" style="${isCurrentUser ? 'border: 2px solid var(--accent); background: rgba(0, 149, 246, 0.05);' : ''}">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div style="font-size: 24px; font-weight: 700; min-width: 40px; text-align: center;">${medal}</div>
+          ${(player.photoUrl && player.photoUrl.trim() && player.photoUrl !== 'null') ? 
+            `<img src="${esc(player.photoUrl.trim())}" alt="${esc(displayName)}" style="width: 48px; height: 48px; border-radius: 50%; object-fit: cover; border: 2px solid var(--border);" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />` : 
+            ''
+          }
+          <div style="display: ${(player.photoUrl && player.photoUrl.trim() && player.photoUrl !== 'null') ? 'none' : 'flex'}; width: 48px; height: 48px; border-radius: 50%; background: var(--accent-transparent); align-items: center; justify-content: center; font-size: 20px; font-weight: 700; color: var(--accent);">
+            ${displayName.charAt(0).toUpperCase()}
+          </div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-weight: 600; font-size: 15px; color: var(--text); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+              ${profileLink ? `<a href="${esc(profileLink)}" target="_blank" style="color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent);">${esc(displayName)}</a>` : esc(displayName)}${isCurrentUser ? ' (Вы)' : ''}
+            </div>
+            <div style="display: flex; gap: 16px; font-size: 13px; color: var(--muted);">
+              <span>Винрейт: <strong style="color: var(--text);">${player.winRate || 0}%</strong></span>
+              <span>Побед: <strong style="color: var(--text);">${player.wins || 0}</strong></span>
+              <span>Игр: <strong style="color: var(--text);">${player.gamesPlayed || 0}</strong></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+  
+  setView(playersHtml, { subpage: true, title: "Топ игроков" });
+}
+
+function uiSettings(context = null){
+  const showDifficulty = State.settings.showDifficulty || false;
+  const hideCompleted = State.settings.hideCompletedTickets || false;
+  
+  setView(`
+    <div class="card">
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <label style="display: flex; align-items: center; justify-content: space-between; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); cursor: pointer; background: var(--bg-card); transition: all var(--transition);" for="setting-show-difficulty" class="settings-toggle-label">
+          <span style="font-weight: 500; font-size: 15px; color: var(--text);">Показывать уровень сложности</span>
+          <div style="position: relative; width: 48px; height: 26px; background: ${showDifficulty ? 'var(--accent)' : 'var(--border)'}; border-radius: 13px; transition: all var(--transition); cursor: pointer;">
+            <div style="position: absolute; top: 2px; left: ${showDifficulty ? '24px' : '2px'}; width: 22px; height: 22px; background: white; border-radius: 50%; transition: all 0.2s ease; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></div>
+          </div>
+          <input type="checkbox" id="setting-show-difficulty" ${showDifficulty ? 'checked' : ''} style="position: absolute; opacity: 0; pointer-events: none;" />
+        </label>
+        <label style="display: flex; align-items: center; justify-content: space-between; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); cursor: pointer; background: var(--bg-card); transition: all var(--transition);" for="setting-hide-completed" class="settings-toggle-label-2">
+          <span style="font-weight: 500; font-size: 15px; color: var(--text);">Скрыть решенные билеты</span>
+          <div style="position: relative; width: 48px; height: 26px; background: ${hideCompleted ? 'var(--accent)' : 'var(--border)'}; border-radius: 13px; transition: all var(--transition); cursor: pointer;">
+            <div style="position: absolute; top: 2px; left: ${hideCompleted ? '24px' : '2px'}; width: 22px; height: 22px; background: white; border-radius: 50%; transition: all 0.2s ease; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></div>
+          </div>
+          <input type="checkbox" id="setting-hide-completed" ${hideCompleted ? 'checked' : ''} style="position: absolute; opacity: 0; pointer-events: none;" />
+        </label>
+      </div>
+    </div>
+  `, { subpage: true, title: "Настройки", settingsContext: context });
+  
+  scheduleFrame(() => {
+    const checkbox1 = qs("#setting-show-difficulty");
+    const label1 = qs(".settings-toggle-label");
+    const checkbox2 = qs("#setting-hide-completed");
+    const label2 = qs(".settings-toggle-label-2");
+    
+    // Обработчик для первого переключателя
+    if (checkbox1 && label1) {
+      label1.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        checkbox1.checked = !checkbox1.checked;
+        State.settings.showDifficulty = checkbox1.checked;
+        saveUserSettings();
+        
+        const toggle = label1.querySelector("div > div");
+        const bg = label1.querySelector("div");
+        if (toggle && bg) {
+          toggle.style.left = checkbox1.checked ? '24px' : '2px';
+          bg.style.background = checkbox1.checked ? 'var(--accent)' : 'var(--border)';
+        }
+      }, { passive: true });
+    }
+    
+    // Обработчик для второго переключателя
+    if (checkbox2 && label2) {
+      label2.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        checkbox2.checked = !checkbox2.checked;
+        State.settings.hideCompletedTickets = checkbox2.checked;
+        saveUserSettings();
+        
+        const toggle = label2.querySelector("div > div");
+        const bg = label2.querySelector("div");
+        if (toggle && bg) {
+          toggle.style.left = checkbox2.checked ? '24px' : '2px';
+          bg.style.background = checkbox2.checked ? 'var(--accent)' : 'var(--border)';
+        }
+      }, { passive: true });
+    }
+  });
+}
+
+function uiTopics(){
+   // Очищаем состояние дуэли при возврате к списку тем
+   clearAdvanceTimer();
+   State.duel = null;
+   
+   const list=[...State.topics.keys()].sort((a,b)=>a.localeCompare(b,'ru'));
+   const listId = "topics-list";
+   
+   if(!list.length){ 
+     setView(`<div class="card"><p>❌ Темы не найдены</p></div>`, { subpage: true, title: "Темы" }); 
+     return; 
+   }
+   
+   const html = `
+     <div class="card">
+       <input type="text" id="search-topics" class="search-input" placeholder="Поиск тем..." data-search-target="${listId}" />
+     </div>
+     <div class="card"><div class="grid auto topics-grid" id="${listId}">
+       ${list.map(t=>{
+         const progress = getTopicProgress(t);
+         const progressPercent = progress ? progress.percent : 0;
+         const isCompleted = progress && progress.completed;
+         const borderClass = isCompleted ? 'topic-completed' : progressPercent > 0 ? 'topic-partial' : '';
+         // Добавляем style с CSS переменной для процента прогресса
+         const progressStyle = progressPercent > 0 && !isCompleted ? `style="--progress-width: ${progressPercent}%"` : '';
+         return `<button type="button" class="btn topic-btn ${borderClass}" data-search-text="${esc(t.toLowerCase())}" data-t="${esc(t)}" ${progressStyle}>${esc(t)}</button>`;
+       }).join("")}
+     </div></div>
+   `;
+   
+   setView(html, { subpage: true, title: "Темы" });
+   
+   scheduleFrame(() => {
+     const searchInput = qs("#search-topics");
+     const listContainer = qs(`#${listId}`);
+     if(searchInput && listContainer) {
+       bindSearch("search-topics", listId);
+     }
+   });
+ }
+ 
+ function uiTickets(){
+   // Очищаем состояние дуэли при возврате к списку билетов
+   clearAdvanceTimer();
+   State.duel = null;
+   
+   let tickets = [...State.byTicket.entries()].map(([key, meta]) => ({
+     key,
+     label: meta.label || key,
+     order: Number.isFinite(meta.order) ? meta.order : Number.MAX_SAFE_INTEGER,
+     questions: meta.questions
+   })).sort((a,b)=> a.order - b.order || a.label.localeCompare(b.label,'ru'));
+   
+   // Фильтруем решенные билеты, если включена настройка
+   const hideCompleted = State.settings.hideCompletedTickets || false;
+   if (hideCompleted) {
+     tickets = tickets.filter(t => {
+       const progress = getTicketProgress(t.label);
+       return !(progress && progress.completed);
+     });
+   }
+   
+   if(!tickets.length){
+     const message = hideCompleted ? 
+       `<div class="card"><p>✅ Все билеты решены!</p></div>` : 
+       `<div class="card"><p>❌ Билеты не найдены</p></div>`;
+     setView(message, { subpage: true, title: "Билеты", showSettings: true });
+     return;
+   }
+   
+   const showDifficulty = State.settings.showDifficulty || false;
+   
+   setView(`
+     <div class="card"><div class="grid auto">
+       ${tickets.map(t=>{
+         const progress = getTicketProgress(t.label);
+         const progressPercent = progress ? progress.percent : 0;
+         const isCompleted = progress && progress.completed;
+         const borderClass = isCompleted ? 'ticket-completed' : progressPercent > 0 ? 'ticket-partial' : '';
+         // Добавляем style с CSS переменной для процента прогресса
+         const progressStyle = progressPercent > 0 && !isCompleted ? `style="--progress-width: ${progressPercent}%"` : '';
+         
+         // Получаем уровень сложности (всегда показываем, если включена настройка)
+         let difficultyHtml = '';
+         if (showDifficulty) {
+           const difficulty = getTicketDifficulty(t.label);
+           if (difficulty) {
+             difficultyHtml = `<span class="ticket-difficulty difficulty-${difficulty.level}">${esc(difficulty.text)}</span>`;
+           }
+         }
+         
+         return `<button type="button" class="answer ticket-btn ${borderClass}" data-ticket="${esc(t.key)}" ${progressStyle}>
+           <span class="ticket-label">${esc(t.label)}</span>
+           ${difficultyHtml}
+         </button>`;
+       }).join("")}
+     </div></div>
+     `, { subpage: true, title: "Билеты", showSettings: true, settingsContext: "tickets" });
+ }
+ 
+async function loadMarkup(){
+  if (State.markup) return State.markup;
+  try {
+    const response = await fetchWithTimeout(MARKUP_URL, { cache:"no-store" }, 10000);
+    if(response.ok) {
+      const data = await response.json();
+      State.markup = data;
+      return data;
+    }
+  } catch(err) {
+    console.warn("Не удалось загрузить разметку:", err);
+  }
+  return null;
+}
+
+async function uiMarkup(){
+  // Если данные уже загружены, показываем сразу
+  if(!State.markup) {
+    // Показываем placeholder сразу для мгновенного отклика
+    setView(`<div class="card"><input type="text" class="search-input" placeholder="🔍 Поиск разметки..." disabled /></div><div><div class="card"><h3>Загрузка...</h3></div></div>`, { subpage: true, title: "Разметка" });
+    
+    // Загружаем в фоне
+    if(!State.markupLoading) {
+      State.markupLoading = true;
+      await loadMarkup();
+      State.markupLoading = false;
+    } else {
+      // Ждем завершения текущей загрузки
+      while(State.markupLoading) {
+        await new Promise(r => setTimeout(r, 50));
+      }
+    }
+  }
+  
+  const markup = State.markup;
+  
+  if(!markup || typeof markup !== "object") {
+    setView(`<div class="card"><p>❌ Данные разметки не найдены</p></div>`, { subpage: true, title: "Разметка" });
+    return;
+  }
+
+  const categories = Object.keys(markup);
+  const listId = "markup-list";
+  let html = `
+    <div class="card">
+      <input type="text" id="search-markup" class="search-input" placeholder="🔍 Поиск разметки..." data-search-target="${listId}" />
+    </div>
+    <div id="${listId}">
+  `;
+
+  for(const category of categories) {
+    const items = markup[category];
+    if(!items || typeof items !== "object") continue;
+
+    const itemKeys = Object.keys(items).sort((a,b)=>{
+      const numA = parseFloat(a) || 0;
+      const numB = parseFloat(b) || 0;
+      return numA - numB;
+    });
+
+    html += `
+      <div class="markup-category">
+        <div class="card">
+          <h3>${esc(category)}</h3>
+        </div>
+        <div class="markup-list">
+          ${itemKeys.map(key => {
+            const item = items[key];
+            if(!item) return "";
+            const number = item.number || key;
+            const image = item.image || "";
+            const description = item.description || "";
+            const imagePath = image.startsWith("./") ? image.substring(2) : image;
+            const searchText = `${number} ${description} ${category}`.toLowerCase();
+            return `
+              <div class="markup-item" data-search-text="${esc(searchText)}">
+                <div class="markup-item__head">
+                  <h4>${esc(number)}</h4>
+                  <span class="markup-item__badge">${esc(number)}</span>
+                </div>
+                ${image ? `<img src="${esc(imagePath)}" class="markup-item__image" alt="${esc(number)}" onerror="this.style.display='none'">` : ""}
+                <p>${esc(description)}</p>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    `;
+  }
+  
+  html += `</div>`;
+  setView(html, { subpage: true, title: "Разметка" });
+  bindSearch("search-markup", listId);
+}
+
+function uiStats(){
+  const questionsCount = State.pool.length;
+  const topicsCount = State.topics.size;
+  const ticketsCount = State.byTicket.size;
+  
+  setView(`
+    <div class="card">
+      <div class="grid auto">
+        <div class="stat-item">
+          <div class="stat-value">${formatNumber(questionsCount)}</div>
+          <div class="stat-label">Вопросов</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value">${formatNumber(topicsCount)}</div>
+          <div class="stat-label">Тем</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value">${formatNumber(ticketsCount)}</div>
+          <div class="stat-label">Билетов</div>
+        </div>
+      </div>
+    </div>
+  `, { subpage: true, title: "Статистика" });
+}
+
+async function uiPenalties(){
+  // Если данные уже загружены, показываем сразу
+  if(!State.penalties || State.penalties.length === 0) {
+    // Показываем placeholder сразу для мгновенного отклика
+    setView(`<div class="card"><input type="text" class="search-input" placeholder="🔍 Поиск штрафов..." disabled /></div><div class="penalties-grid"><div class="penalty"><h4>Загрузка...</h4></div></div>`, { subpage: true, title: "Штрафы" });
+    
+    // Загружаем в фоне
+    if(!State.penaltiesLoading) {
+      State.penaltiesLoading = true;
+      await loadPenalties();
+      State.penaltiesLoading = false;
+    } else {
+      // Ждем завершения текущей загрузки
+      while(State.penaltiesLoading) {
+        await new Promise(r => setTimeout(r, 50));
+      }
+    }
+  }
+
+  const items = State.penalties || [];
+  const listId = "penalties-list";
+  
+  if(!items.length) {
+    setView(`<div class="card"><p>❌ Данные о штрафах не найдены</p></div>`, { subpage: true, title: "Штрафы" });
+    return;
+  }
+
+  const html = `
+    <div class="card">
+      <input type="text" id="search-penalties" class="search-input" placeholder="🔍 Поиск штрафов..." data-search-target="${listId}" />
+    </div>
+    <div class="penalties-grid" id="${listId}">
+      ${items.map(item => {
+        const searchText = `${item.articlePart || ""} ${item.text || ""} ${item.penalty || ""}`.toLowerCase();
+        return `
+          <div class="penalty" data-search-text="${esc(searchText)}">
+            <h4>Статья ${esc(item.articlePart || "—")}</h4>
+            <p>${esc(item.text || "")}</p>
+            <p class="penalty__fine">${esc(item.penalty || "—")}</p>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+
+  setView(html, { subpage: true, title: "Штрафы" });
+  bindSearch("search-penalties", listId);
+}
+ 
+ /* =======================
+    Поиск противника для дуэли
+ ======================= */
+const DUEL_SEARCH_KEY = "pdd-duel-search-queue";
+const DUEL_SEARCH_TIMEOUT = 20000; // 20 секунд
+// URL API сервера
+// Для разработки используйте: const API_BASE_URL = "http://localhost:8080";
+const API_BASE_URL = "https://pdd-duel-webapp.vercel.app";  // Продакшен API сервер на Vercel
+
+function startDuelSearch() {
+  // Пробуем получить Telegram ID несколько раз (API может загружаться асинхронно)
+  let currentUserId = getTelegramUserId();
+  
+  console.log("🔍 Поиск Telegram ID:", currentUserId);
+  
+  // Если ID не найден, пробуем еще раз через небольшую задержку
+  if (!currentUserId) {
+    // Пробуем получить через window напрямую
+    try {
+      if (window.Telegram?.WebApp?.initDataUnsafe?.user?.id) {
+        currentUserId = window.Telegram.WebApp.initDataUnsafe.user.id;
+        console.log("✅ Telegram ID найден через window.Telegram.WebApp.initDataUnsafe");
+      } else if (window.Telegram?.WebApp?.initData?.user?.id) {
+        currentUserId = window.Telegram.WebApp.initData.user.id;
+        console.log("✅ Telegram ID найден через window.Telegram.WebApp.initData");
+      }
+    } catch(e) {
+      console.warn("Ошибка при получении Telegram ID:", e);
+    }
+  }
+  
+  // Если все еще нет ID, используем временный ID (без ошибок!)
+  if (!currentUserId) {
+    console.log("⚠️ Telegram ID не найден, используем временный ID");
+    // Проверяем, есть ли уже сохраненный временный ID
+    const savedTempId = localStorage.getItem('pdd-duel-temp-user-id');
+    if (savedTempId) {
+      currentUserId = savedTempId;
+    } else {
+      currentUserId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      localStorage.setItem('pdd-duel-temp-user-id', currentUserId);
+    }
+  }
+  
+  console.log("🎮 Начинаем поиск противника с ID:", currentUserId);
+  
+  // Останавливаем предыдущий поиск если есть
+  stopDuelSearch();
+  
+  State.duelSearch.active = true;
+  State.duelSearch.startTime = Date.now();
+  State.duelSearch.opponentId = null;
+  State.duelSearch.isBot = false;
+  
+  // Добавляем себя в очередь поиска (async)
+  addToSearchQueue(currentUserId).catch(e => console.error("Ошибка добавления в очередь:", e));
+  
+  // Показываем экран поиска
+  showDuelSearchScreen();
+  
+  // Начинаем проверку каждую секунду
+  const searchInterval = setInterval(() => {
+    if (!State.duelSearch.active) {
+      clearInterval(searchInterval);
+      return;
+    }
+    
+    checkForOpponent(currentUserId).catch(e => console.error("Ошибка проверки противника:", e));
+    
+    // Обновляем экран с новым временем
+    updateDuelSearchScreen();
+    
+    // Проверяем, прошло ли 20 секунд
+    const elapsed = Date.now() - State.duelSearch.startTime;
+    if (elapsed >= DUEL_SEARCH_TIMEOUT && !State.duelSearch.opponentId) {
+      showBotButton();
+    }
+  }, 1000);
+  
+  State.duelSearch.searchInterval = searchInterval;
+}
+
+function stopDuelSearch() {
+  if (State.duelSearch.searchInterval) {
+    clearInterval(State.duelSearch.searchInterval);
+    State.duelSearch.searchInterval = null;
+  }
+  State.duelSearch.active = false;
+  removeFromSearchQueue();
+}
+
+async function addToSearchQueue(userId) {
+  try {
+    if (!userId) {
+      // Если userId не передан, используем временный
+      const savedTempId = localStorage.getItem('pdd-duel-temp-user-id');
+      userId = savedTempId || `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      if (!savedTempId) {
+        localStorage.setItem('pdd-duel-temp-user-id', userId);
+      }
+    }
+    
+    // Используем API сервер для добавления в очередь
+    try {
+      const userIdNum = typeof userId === 'string' && userId.startsWith('temp-') ? userId : parseInt(userId);
+      const response = await fetch(`${API_BASE_URL}/api/duel/search/join`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ user_id: userIdNum || userId })
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        console.log("✅ Добавлен в очередь поиска через API:", userIdNum, result);
+      } else {
+        const errorText = await response.text();
+        console.warn("⚠️ Не удалось добавить в очередь через API:", response.status, errorText);
+        // Fallback на localStorage
+        const queue = getSearchQueue();
+        const now = Date.now();
+        const activeQueue = queue.filter(entry => now - entry.timestamp < 30000);
+        if (!activeQueue.find(entry => entry.userId === userId)) {
+          activeQueue.push({ userId: userId, timestamp: now });
+          localStorage.setItem(DUEL_SEARCH_KEY, JSON.stringify(activeQueue));
+        }
+      }
+    } catch(apiError) {
+      console.warn("⚠️ API недоступен, используем localStorage:", apiError);
+      // Fallback на localStorage
+      const queue = getSearchQueue();
+      const now = Date.now();
+      const activeQueue = queue.filter(entry => now - entry.timestamp < 30000);
+      if (!activeQueue.find(entry => entry.userId === userId)) {
+        activeQueue.push({ userId: userId, timestamp: now });
+        localStorage.setItem(DUEL_SEARCH_KEY, JSON.stringify(activeQueue));
+      }
+    }
+  } catch(e) {
+    console.error("Ошибка добавления в очередь:", e);
+  }
+}
+
+async function removeFromSearchQueue() {
+  try {
+    let currentUserId = getTelegramUserId();
+    if (!currentUserId) {
+      // Используем сохраненный временный ID если есть
+      currentUserId = localStorage.getItem('pdd-duel-temp-user-id');
+      if (!currentUserId) return;
+    }
+    
+    // Используем API сервер для удаления из очереди
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/duel/search/leave`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ user_id: parseInt(currentUserId) || currentUserId })
+      });
+      
+      if (response.ok) {
+        console.log("✅ Удален из очереди через API");
+      } else {
+        // Fallback на localStorage
+        const queue = getSearchQueue();
+        const filtered = queue.filter(entry => entry.userId !== currentUserId);
+        localStorage.setItem(DUEL_SEARCH_KEY, JSON.stringify(filtered));
+      }
+    } catch(apiError) {
+      console.warn("⚠️ API недоступен, используем localStorage:", apiError);
+      // Fallback на localStorage
+      const queue = getSearchQueue();
+      const filtered = queue.filter(entry => entry.userId !== currentUserId);
+      localStorage.setItem(DUEL_SEARCH_KEY, JSON.stringify(filtered));
+    }
+  } catch(e) {
+    console.error("Ошибка удаления из очереди:", e);
+  }
+}
+
+function getSearchQueue() {
+  try {
+    const data = localStorage.getItem(DUEL_SEARCH_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch(e) {
+    return [];
+  }
+}
+
+async function checkForOpponent(currentUserId) {
+  try {
+    // Используем API сервер для поиска противника
+    try {
+      const userIdNum = typeof currentUserId === 'string' && currentUserId.startsWith('temp-') ? currentUserId : parseInt(currentUserId);
+      const response = await fetch(`${API_BASE_URL}/api/duel/search/check`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ user_id: userIdNum || currentUserId })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log("🔍 Проверка противника:", userIdNum, "Результат:", data);
+        if (data.success && data.found && data.opponent_id) {
+          // Найден противник через API!
+          console.log("✅ Противник найден:", data.opponent_id);
+          State.duelSearch.opponentId = data.opponent_id;
+          State.duelSearch.isBot = false;
+          stopDuelSearch();
+          startRealDuel(data.opponent_id);
+          return;
+        }
+      } else {
+        const errorText = await response.text();
+        console.warn("⚠️ Ошибка проверки противника:", response.status, errorText);
+      }
+    } catch(apiError) {
+      console.warn("⚠️ API недоступен, используем localStorage:", apiError);
+    }
+    
+    // Fallback на localStorage
+    const queue = getSearchQueue();
+    const now = Date.now();
+    
+    // Ищем другого игрока (не себя и не старше 30 секунд)
+    const opponent = queue.find(entry => 
+      entry.userId !== currentUserId && 
+      (now - entry.timestamp) < 30000
+    );
+    
+    if (opponent) {
+      // Найден противник через localStorage!
+      State.duelSearch.opponentId = opponent.userId;
+      State.duelSearch.isBot = false;
+      stopDuelSearch();
+      startRealDuel(opponent.userId);
+    }
+  } catch(e) {
+    console.error("Ошибка проверки противника:", e);
+  }
+}
+
+function showDuelSearchScreen() {
+  updateDuelSearchScreen();
+  
+  // Привязываем обработчики
+  scheduleFrame(() => {
+    const botBtn = qs("#duel-bot-btn");
+    if (botBtn) {
+      botBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        startBotDuel();
+      }, { passive: true });
+    }
+    
+    const cancelBtn = qs("#cancel-duel-search");
+    if (cancelBtn) {
+      cancelBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        stopDuelSearch();
+        renderHome();
+      }, { passive: true });
+    }
+  });
+}
+
+function updateDuelSearchScreen() {
+  if (!State.duelSearch.active) return;
+  
+  const elapsed = Math.floor((Date.now() - State.duelSearch.startTime) / 1000);
+  const timeLeft = Math.max(0, Math.floor(DUEL_SEARCH_TIMEOUT / 1000) - elapsed);
+  const showBotButton = timeLeft <= 0;
+  
+  setView(`
+    <div class="card" style="text-align: center; padding: 40px 20px;">
+      <div style="font-size: 48px; margin-bottom: 20px;">⚔️</div>
+      <h3 style="margin-bottom: 12px;">Поиск противника...</h3>
+      <p style="color: var(--muted); margin-bottom: 24px;">
+        Ищем для вас соперника
+      </p>
+      <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 24px;">
+        <div class="search-dot" style="animation-delay: 0s;"></div>
+        <div class="search-dot" style="animation-delay: 0.2s;"></div>
+        <div class="search-dot" style="animation-delay: 0.4s;"></div>
+      </div>
+      <div id="search-timer" style="font-size: 14px; color: var(--muted); margin-bottom: 20px;">
+        Прошло: ${elapsed} сек
+      </div>
+      ${showBotButton ? `
+        <button class="btn btn-primary" id="duel-bot-btn" style="width: 100%; margin-top: 20px;">
+          🤖 Играть против робота
+        </button>
+      ` : ''}
+      <button class="btn" id="cancel-duel-search" style="width: 100%; margin-top: 12px;">
+        Отмена
+      </button>
+    </div>
+  `, { subpage: true, title: "Дуэль" });
+  
+  // Привязываем обработчики после обновления
+  scheduleFrame(() => {
+    const botBtn = qs("#duel-bot-btn");
+    if (botBtn && !botBtn.hasAttribute("data-listener")) {
+      botBtn.setAttribute("data-listener", "true");
+      botBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        startBotDuel();
+      }, { passive: true });
+    }
+    
+    const cancelBtn = qs("#cancel-duel-search");
+    if (cancelBtn && !cancelBtn.hasAttribute("data-listener")) {
+      cancelBtn.setAttribute("data-listener", "true");
+      cancelBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        stopDuelSearch();
+        renderHome();
+      }, { passive: true });
+    }
+  });
+}
+
+function showBotButton() {
+  // Обновляем экран, чтобы показать кнопку бота
+  const elapsed = Math.floor((Date.now() - State.duelSearch.startTime) / 1000);
+  
+  const searchContent = qs(".view-content");
+  if (searchContent) {
+    const botBtnHtml = `
+      <button class="btn btn-primary" id="duel-bot-btn" style="width: 100%; margin-top: 20px;">
+        🤖 Играть против робота
+      </button>
+    `;
+    
+    const existingBtn = qs("#duel-bot-btn");
+    if (!existingBtn) {
+      const card = searchContent.querySelector(".card");
+      if (card) {
+        card.insertAdjacentHTML("beforeend", botBtnHtml);
+        const botBtn = qs("#duel-bot-btn");
+        if (botBtn) {
+          botBtn.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            startBotDuel();
+          }, { passive: true });
+        }
+      }
+    }
+  }
+}
+
+function startBotDuel() {
+  stopDuelSearch();
+  State.duelSearch.isBot = true;
+  State.duelSearch.opponentId = null;
+  
+  // Запускаем обычную дуэль, но помечаем как против бота
+  startDuel({ mode: "duel", isBot: true });
+}
+
+function startRealDuel(opponentId) {
+  State.duelSearch.isBot = false;
+  State.duelSearch.opponentId = opponentId;
+  
+  // Запускаем дуэль против реального игрока
+  startDuel({ mode: "duel", opponentId: opponentId, isBot: false });
+  
+  // Начинаем отслеживать прогресс соперника
+  startOpponentProgressTracking(opponentId);
+}
+
+// Начать отслеживание прогресса соперника
+function startOpponentProgressTracking(opponentId) {
+  // Останавливаем предыдущий интервал если есть
+  if (State.opponentProgressInterval) {
+    clearInterval(State.opponentProgressInterval);
+  }
+  
+  // Обновляем прогресс каждые 2 секунды
+  State.opponentProgressInterval = setInterval(() => {
+    updateOpponentProgress(opponentId);
+  }, 2000);
+  
+  // Первое обновление сразу
+  updateOpponentProgress(opponentId);
+}
+
+// Остановить отслеживание прогресса соперника
+function stopOpponentProgressTracking() {
+  if (State.opponentProgressInterval) {
+    clearInterval(State.opponentProgressInterval);
+    State.opponentProgressInterval = null;
+  }
+}
+
+// Обновить прогресс соперника
+async function updateOpponentProgress(opponentId) {
+  const d = State.duel;
+  if (!d || !opponentId || d.isBot) return;
+  
+  const currentUserId = getTelegramUserId();
+  if (!currentUserId) return;
+  
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/duel/progress/get`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ 
+        user_id: parseInt(currentUserId) || currentUserId,
+        opponent_id: parseInt(opponentId) || opponentId
+      })
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.progress) {
+        State.opponentProgress.currentQuestion = data.progress.current_question || 0;
+        State.opponentProgress.score = data.progress.score || 0;
+        
+        // Обновляем отображение прогресса соперника
+        updateOpponentProgressDisplay();
+      }
+    }
+  } catch(e) {
+    console.warn("Ошибка получения прогресса соперника:", e);
+  }
+}
+
+// Обновить отображение прогресса соперника
+function updateOpponentProgressDisplay() {
+  const opponentProgressEl = qs("#opponent-progress");
+  if (opponentProgressEl && State.opponentProgress) {
+    opponentProgressEl.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: rgba(0, 149, 246, 0.05); border-radius: 8px; margin-bottom: 12px;">
+        <span style="font-size: 12px; color: var(--muted);">Соперник:</span>
+        <span style="font-size: 13px; font-weight: 600; color: var(--text);">
+          Вопрос ${State.opponentProgress.currentQuestion + 1} | Очки: ${State.opponentProgress.score}
+        </span>
+      </div>
+    `;
+  }
+}
+
+// Отправить свой прогресс на сервер
+async function syncDuelProgress() {
+  const d = State.duel;
+  if (!d || !d.opponentId || d.isBot) return;
+  
+  const currentUserId = getTelegramUserId();
+  if (!currentUserId) return;
+  
+  try {
+    await fetch(`${API_BASE_URL}/api/duel/progress/update`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ 
+        user_id: parseInt(currentUserId) || currentUserId,
+        opponent_id: parseInt(d.opponentId) || d.opponentId,
+        current_question: d.i || 0,
+        user_score: d.me || 0
+      })
+    });
+  } catch(e) {
+    console.warn("Ошибка синхронизации прогресса:", e);
+  }
+}
+
+ /* =======================
+    Викторина
+ ======================= */
+ function startDuel({mode,topic=null,isBot=false,opponentId=null}){
+   clearAdvanceTimer();
+   const src = topic ? (State.topics.get(topic)||[]) : State.pool;
+   if(!src.length){ setView(`<div class="card"><h3>Дуэль</h3><p>⚠️ Нет данных</p></div>`, { subpage: true, title: topic || "Дуэль" }); return; }
+   
+   // Проверяем, есть ли сохраненный прогресс для темы
+   let savedProgress = null;
+   let startIndex = 0;
+   if (topic) {
+     savedProgress = getTopicProgress(topic);
+     if (savedProgress && !savedProgress.completed) {
+       // Если есть сохраненный прогресс, начинаем с сохраненного индекса
+       startIndex = savedProgress.currentIndex !== undefined ? savedProgress.currentIndex : 0;
+       // Если индекс больше или равен количеству вопросов, начинаем сначала
+       if (startIndex >= 20) startIndex = 0;
+     }
+   }
+   
+   // Если есть сохраненный прогресс, используем тот же порядок вопросов
+   let q;
+   if (savedProgress && savedProgress.questionOrder && savedProgress.questionOrder.length > 0 && !savedProgress.completed) {
+     // Восстанавливаем порядок вопросов из сохраненного прогресса
+     const questionMap = new Map(src.map((q) => [q.question || q.text || JSON.stringify(q), q]));
+     q = savedProgress.questionOrder.map(qKey => questionMap.get(qKey)).filter(Boolean);
+     if (q.length === 0) {
+       q = shuffle(src).slice(0,20);
+     }
+   } else {
+     q = shuffle(src).slice(0,20);
+   }
+   
+   // Восстанавливаем ответы если есть сохраненный прогресс
+   let answers = Array(q.length).fill(null);
+   let me = 0;
+   if (savedProgress && !savedProgress.completed) {
+     if (savedProgress.answers && savedProgress.answers.length > 0) {
+       // Обрезаем или расширяем массив ответов до нужной длины
+       answers = Array(q.length).fill(null);
+       for (let i = 0; i < Math.min(savedProgress.answers.length, q.length); i++) {
+         if (savedProgress.answers[i]) {
+           answers[i] = { ...savedProgress.answers[i] };
+         }
+       }
+       me = savedProgress.correct || 0;
+     }
+     // Восстанавливаем индекс, на котором остановились
+     startIndex = savedProgress.currentIndex !== undefined ? savedProgress.currentIndex : 0;
+     // Если индекс больше или равен количеству вопросов, начинаем сначала
+     if (startIndex >= q.length) startIndex = 0;
+   }
+   
+   State.duel = {
+     mode,
+     topic,
+     i: startIndex,
+     me: me,
+     q,
+     answers: answers,
+     furthest: Math.max(startIndex, answers.filter(a => a && a.status).length - 1),
+     completed: false,
+     isBot: isBot || false,
+     opponentId: opponentId || null
+   };
+   renderQuestion(startIndex);
+ }
+ function startTicket(key){
+   clearAdvanceTimer();
+   const bucket = State.byTicket.get(key);
+  const arr = (bucket && Array.isArray(bucket.questions)) ? bucket.questions : [];
+  const label = bucket && bucket.label ? bucket.label : key;
+  if(!arr.length){ setView(`<div class="card"><h3>${esc(label)}</h3><p>⚠️ Нет вопросов</p></div>`, { subpage: true, title: label || "Билет" }); return; }
+  
+  // Проверяем, есть ли сохраненный прогресс для билета
+  const savedProgress = getTicketProgress(label);
+  let startIndex = 0;
+  
+  // Если есть сохраненный прогресс, используем тот же порядок вопросов
+  let q;
+  if (savedProgress && savedProgress.questionOrder && savedProgress.questionOrder.length > 0 && !savedProgress.completed) {
+    // Восстанавливаем порядок вопросов из сохраненного прогресса
+    const questionMap = new Map(arr.map((q) => [q.question || q.text || JSON.stringify(q), q]));
+    q = savedProgress.questionOrder.map(qKey => questionMap.get(qKey)).filter(Boolean);
+    if (q.length === 0) {
+      q = arr.length>20 ? shuffle(arr).slice(0,20) : arr.slice(0,20);
+    }
+  } else {
+    q = arr.length>20 ? shuffle(arr).slice(0,20) : arr.slice(0,20);
+  }
+  
+  // Восстанавливаем ответы и индекс если есть сохраненный прогресс
+  let answers = Array(q.length).fill(null);
+  let me = 0;
+  if (savedProgress && !savedProgress.completed) {
+    if (savedProgress.answers && savedProgress.answers.length > 0) {
+      // Обрезаем или расширяем массив ответов до нужной длины
+      answers = Array(q.length).fill(null);
+      for (let i = 0; i < Math.min(savedProgress.answers.length, q.length); i++) {
+        if (savedProgress.answers[i]) {
+          answers[i] = { ...savedProgress.answers[i] };
+        }
+      }
+      me = savedProgress.correct || 0;
+    }
+    // Восстанавливаем индекс, на котором остановились
+    startIndex = savedProgress.currentIndex !== undefined ? savedProgress.currentIndex : 0;
+    // Если индекс больше или равен количеству вопросов, начинаем сначала
+    if (startIndex >= q.length) startIndex = 0;
+  }
+  
+   State.duel = {
+     mode:"ticket",
+     topic:null,
+     i: startIndex,
+     me: me,
+     q,
+    ticketLabel: label,
+     answers: answers,
+     furthest: Math.max(startIndex, answers.filter(a => a && a.status).length - 1),
+     completed: false
+   };
+   renderQuestion(startIndex);
+ }
+ 
+ function renderQuestion(targetIndex){
+   const d = State.duel;
+   if(!d || !Array.isArray(d.q)) return;
+   clearAdvanceTimer();
+   if(typeof targetIndex !== "number") targetIndex = d.i;
+   if(targetIndex >= d.q.length){
+     finishDuel();
+     return;
+   }
+   d.i = Math.max(0, Math.min(targetIndex, d.q.length - 1));
+   const q = d.q[d.i];
+  const duelTicketLabel = d.ticketLabel ? d.ticketLabel : null;
+  const ticketInfo = q.ticketLabel || duelTicketLabel || (q.ticketNumber ? `Билет ${q.ticketNumber}` : "Билет");
+  const headerTitle = d.mode === "topic" && d.topic ? d.topic : (d.mode === "ticket" ? (duelTicketLabel || ticketInfo) : "Дуэль");
+   const answerState = d.answers[d.i];
+   const isAnswered = !!(answerState && answerState.status);
+  const tipVisible = !!(answerState && answerState.status === "wrong");
+   const tracker = renderTracker();
+   const controls = renderQuestionControls(isAnswered);
+   
+   // Индикатор прогресса сверху
+   const progressPercent = ((d.i+1)/d.q.length*100).toFixed(0);
+   const progressIndicator = `<div class="question-progress"><div class="question-progress-bar" style="--progress-width: ${progressPercent}%"><div style="width: ${progressPercent}%"></div></div><span class="question-progress-text">${d.i+1}/${d.q.length}</span></div>`;
+   
+   // Прогресс соперника (только для дуэли с реальным игроком)
+   const opponentProgressHtml = (d.mode === "duel" && d.opponentId && !d.isBot) ? `
+     <div id="opponent-progress" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: rgba(0, 149, 246, 0.05); border-radius: 8px; margin-bottom: 12px;">
+       <span style="font-size: 12px; color: var(--muted);">Соперник:</span>
+       <span style="font-size: 13px; font-weight: 600; color: var(--text);">
+         Вопрос ${State.opponentProgress.currentQuestion + 1} | Очки: ${State.opponentProgress.score}
+       </span>
+     </div>
+   ` : '';
+ 
+   setView(`
+     ${progressIndicator}
+     ${opponentProgressHtml}
+     ${tracker}
+     <div class="card">
+       <div class="meta">${esc(ticketInfo)}</div>
+       <h3>${esc(q.question)}</h3>
+       ${q.image?`<img src="${q.image}" class="qimg" onerror="this.style.display='none'"/>`:""}
+       <div class="grid">${q.answers.map((a,i)=>renderAnswerButton(a, i, q, answerState)).join("")}</div>
+      <div id="tip" class="meta" style="${tipVisible ? "display:block" : "display:none"};margin-top:8px;color:#ccc">💡 ${esc(q.tip)}</div>
+     </div>
+     ${controls}
+   `, { subpage: true, title: headerTitle });
+   
+   // Прокручиваем индикатор вопросов к текущему вопросу
+   setTimeout(() => {
+     const tracker = qs(".question-tracker");
+     const currentDot = qs(`.tracker-dot[data-question="${d.i}"]`);
+     if (tracker && currentDot) {
+       const trackerRect = tracker.getBoundingClientRect();
+       const dotRect = currentDot.getBoundingClientRect();
+       const scrollLeft = tracker.scrollLeft;
+       const dotLeft = dotRect.left - trackerRect.left + scrollLeft;
+       const dotWidth = dotRect.width;
+       const trackerWidth = trackerRect.width;
+       
+       // Прокручиваем так, чтобы текущий вопрос был виден
+       const targetScroll = dotLeft - (trackerWidth / 2) + (dotWidth / 2);
+       tracker.scrollTo({
+         left: Math.max(0, targetScroll),
+         behavior: 'smooth'
+       });
+     }
+   }, 100);
+   
+   State.lock = false;
+ }
+ 
+ function onAnswer(i){
+   if(State.lock) return;
+   State.lock = true;
+   const d = State.duel, q = d.q[d.i];
+   const currentIndex = d.i;
+   const correct = q.correctIndex;
+   const prev = d.answers[d.i];
+  if(prev && prev.status){
+     State.lock = false;
+     return;
+   }
+ 
+   const isCorrect = (i === correct);
+   if(isCorrect) d.me++;
+ 
+   d.answers[d.i] = { status: isCorrect ? "correct" : "wrong", selected: i };
+   d.furthest = Math.min(d.q.length - 1, Math.max(d.furthest, d.i + 1));
+   
+   // Синхронизируем прогресс с сервером (для дуэли с реальным игроком)
+   if (d.mode === "duel" && d.opponentId && !d.isBot) {
+     syncDuelProgress();
+   }
+ 
+   // Улучшенные тосты с анимацией
+   if(isCorrect){ 
+     toast("✓");
+   } else { 
+     toast("✕");
+   }
+ 
+   // Обновляем UI без полной перерисовки для производительности
+   const answerButtons = qsa("button.answer[data-i]");
+   answerButtons.forEach((btn, idx) => {
+     btn.classList.remove("correct", "wrong");
+     if (idx === i) {
+       btn.classList.add(isCorrect ? "correct" : "wrong");
+     }
+     if (idx === correct && !isCorrect) {
+       btn.classList.add("correct");
+     }
+     btn.disabled = true;
+   });
+   
+   // Обновляем трекер
+   const trackerDot = qs(`[data-question="${currentIndex}"]`);
+   if(trackerDot) {
+     trackerDot.classList.remove("is-correct", "is-wrong");
+     trackerDot.classList.add(isCorrect ? "is-correct" : "is-wrong");
+   }
+   
+   // Обновляем индикатор прогресса
+   const progressBar = qs(".question-progress-bar > div");
+   const progressPercent = ((currentIndex+1)/d.q.length*100).toFixed(0);
+   if(progressBar) {
+     progressBar.style.width = `${progressPercent}%`;
+   }
+   const progressText = qs(".question-progress-text");
+   if(progressText) {
+     progressText.textContent = `${currentIndex+1}/${d.q.length}`;
+   }
+
+   // Показываем подсказку сразу, если ответ неправильный
+   if(!isCorrect && q.tip) {
+     const tipElement = qs("#tip");
+     if(tipElement) {
+       tipElement.style.display = "block";
+       tipElement.textContent = `💡 ${q.tip}`;
+     }
+   }
+
+   // Сохраняем прогресс билета или темы в реальном времени (с текущим индексом и ответами)
+   // Сохраняем текущий индекс (до перехода), чтобы при возврате можно было продолжить
+   if(d.mode === "ticket" && d.ticketLabel) {
+     const answeredCount = d.answers.filter(a => a && a.status).length;
+     // Сохраняем уникальные идентификаторы вопросов (используем текст вопроса как ключ)
+     const questionOrder = d.q.map((q) => q.question || q.text || JSON.stringify(q));
+     saveTicketProgress(d.ticketLabel, d.me, d.q.length, answeredCount, currentIndex, d.answers, questionOrder);
+   } else if(d.mode === "topic" && d.topic) {
+     const answeredCount = d.answers.filter(a => a && a.status).length;
+     // Сохраняем уникальные идентификаторы вопросов (используем текст вопроса как ключ)
+     const questionOrder = d.q.map((q) => q.question || q.text || JSON.stringify(q));
+     saveTopicProgress(d.topic, d.me, d.q.length, answeredCount, currentIndex, d.answers, questionOrder);
+   }
+
+   // Активируем кнопку "Следующий" после любого ответа
+   const nextBtn = qs("[data-next], [data-finish]");
+   if(nextBtn) {
+     nextBtn.disabled = false;
+   }
+
+   if(isCorrect){
+     // Переходим к следующему вопросу без перерисовки текущего
+     State.advanceTimer = setTimeout(()=>{
+      const currentAnswer = d.answers[currentIndex];
+      const isCurrentCorrect = currentAnswer && currentAnswer.status === "correct";
+      if(State.duel === d && d.i === currentIndex && isCurrentCorrect){
+         const newIndex = Math.min(d.i + 1, d.q.length);
+         if(newIndex >= d.q.length){
+           finishDuel();
+         } else {
+           d.i = newIndex;
+           // Сохраняем прогресс после перехода к следующему вопросу
+           if(d.mode === "ticket" && d.ticketLabel) {
+             const answeredCount = d.answers.filter(a => a && a.status).length;
+             const questionOrder = d.q.map((q) => q.question || q.text || JSON.stringify(q));
+             saveTicketProgress(d.ticketLabel, d.me, d.q.length, answeredCount, d.i, d.answers, questionOrder);
+           } else if(d.mode === "topic" && d.topic) {
+             const answeredCount = d.answers.filter(a => a && a.status).length;
+             const questionOrder = d.q.map((q) => q.question || q.text || JSON.stringify(q));
+             saveTopicProgress(d.topic, d.me, d.q.length, answeredCount, d.i, d.answers, questionOrder);
+           }
+           // Синхронизируем прогресс с сервером (для дуэли с реальным игроком)
+           if (d.mode === "duel" && d.opponentId && !d.isBot) {
+             syncDuelProgress();
+           }
+           renderQuestion(d.i);
+         }
+       }
+     }, 800);
+   } else {
+     // Если неправильно, разблокируем и позволяем перейти к следующему вопросу
+     State.lock = false;
+     // Автоматически переходим к следующему вопросу через небольшую задержку
+     State.advanceTimer = setTimeout(()=>{
+       if(State.duel === d && d.i === currentIndex){
+         const newIndex = Math.min(d.i + 1, d.q.length);
+         if(newIndex >= d.q.length){
+           finishDuel();
+         } else {
+           d.i = newIndex;
+           // Сохраняем прогресс после перехода к следующему вопросу
+           if(d.mode === "ticket" && d.ticketLabel) {
+             const answeredCount = d.answers.filter(a => a && a.status).length;
+             const questionOrder = d.q.map((q) => q.question || q.text || JSON.stringify(q));
+             saveTicketProgress(d.ticketLabel, d.me, d.q.length, answeredCount, d.i, d.answers, questionOrder);
+           } else if(d.mode === "topic" && d.topic) {
+             const answeredCount = d.answers.filter(a => a && a.status).length;
+             const questionOrder = d.q.map((q) => q.question || q.text || JSON.stringify(q));
+             saveTopicProgress(d.topic, d.me, d.q.length, answeredCount, d.i, d.answers, questionOrder);
+           }
+           // Синхронизируем прогресс с сервером (для дуэли с реальным игроком)
+           if (d.mode === "duel" && d.opponentId && !d.isBot) {
+             syncDuelProgress();
+           }
+           renderQuestion(d.i);
+         }
+       }
+     }, 1500); // Чуть больше задержка для неправильного ответа, чтобы пользователь увидел подсказку
+   }
+ }
+ 
+ function finishDuel(){
+   const d=State.duel;
+   if(!d || d.completed) return;
+   clearAdvanceTimer();
+   d.completed = true;
+   
+   // Останавливаем отслеживание прогресса соперника
+   stopOpponentProgressTracking();
+   
+   const isBot = d.isBot || false;
+   
+   // Сохраняем финальный прогресс билета или темы (при завершении)
+   if (d.mode === "ticket" && d.ticketLabel) {
+     const questionOrder = d.q.map((q) => q.question || q.text || JSON.stringify(q));
+     saveTicketProgress(d.ticketLabel, d.me, d.q.length, d.q.length, d.q.length, d.answers, questionOrder);
+     // Обновляем статистику сложности билета
+     updateTicketDifficultyStats(d.ticketLabel, d.me, d.q.length);
+     // Увеличиваем счетчик решенных билетов
+     if (!State.stats.ticketsSolved) State.stats.ticketsSolved = 0;
+     State.stats.ticketsSolved++;
+     saveUserStats();
+   } else if (d.mode === "topic" && d.topic) {
+     const questionOrder = d.q.map((q) => q.question || q.text || JSON.stringify(q));
+     saveTopicProgress(d.topic, d.me, d.q.length, d.q.length, d.q.length, d.answers, questionOrder);
+   }
+   
+   // Обновляем статистику ТОЛЬКО если это дуэль (не билет и не тема)
+   let expGain = 0;
+   if (d.mode === "duel") {
+     if (!isBot) {
+       // Против реального игрока - засчитываем в топ
+       incrementGamesPlayed();
+       const correctPercent = (d.me / d.q.length) * 100;
+       // Начисляем опыт: 10 очков за игру + бонус за правильные ответы
+       expGain = 10 + Math.floor(correctPercent / 10);
+       addExperience(expGain);
+     } else {
+       // Для игры против бота только опыт, но не засчитываем в статистику для топа
+       const correctPercent = (d.me / d.q.length) * 100;
+       expGain = 5 + Math.floor(correctPercent / 10); // Меньше опыта за бота
+       addExperience(expGain);
+     }
+   } else {
+     // Для билетов и тем начисляем только опыт
+     const correctPercent = (d.me / d.q.length) * 100;
+     expGain = 5 + Math.floor(correctPercent / 10);
+     addExperience(expGain);
+   }
+   
+   const headerTitle = d.mode === "ticket" ? (d.ticketLabel || "Билет") : (d.mode === "topic" && d.topic ? d.topic : (d.mode === "duel" ? "Дуэль" : "Дуэль"));
+   const botNotice = isBot ? '<p style="color: var(--muted); font-size: 12px; margin-top: 8px;">⚠️ Игра против робота не засчитывается в топ</p>' : '';
+   const opponentType = isBot ? '<p style="color: var(--muted); font-size: 12px;">🤖 Против робота</p>' : '<p style="color: var(--accent); font-size: 12px;">⚔️ Против игрока</p>';
+   
+   const isExcellent = d.me >= Math.ceil(d.q.length * 0.6);
+   const resultIcon = isExcellent ? "🏆" : "✅";
+   const resultTitle = isExcellent ? "Отлично!" : "Завершено";
+   const resultColor = isExcellent ? "#10b981" : "var(--accent)";
+   
+   setView(`
+     <div class="card" style="text-align: center; padding: 32px 24px;">
+       <div style="font-size: 64px; margin-bottom: 16px;">${resultIcon}</div>
+       <h2 style="font-size: 28px; font-weight: 700; color: ${resultColor}; margin-bottom: 12px;">${resultTitle}</h2>
+       <p style="font-size: 18px; color: var(--text); margin-bottom: 8px;">Верных: <strong style="color: ${resultColor}; font-size: 20px;">${d.me}</strong> из ${d.q.length}</p>
+       ${opponentType}
+       <div style="margin: 20px 0; padding: 16px; background: linear-gradient(135deg, rgba(0, 149, 246, 0.1) 0%, rgba(0, 149, 246, 0.05) 100%); border-radius: var(--radius-md); border: 1px solid var(--border);">
+         <p style="font-size: 14px; color: var(--muted); margin-bottom: 4px;">Получено опыта</p>
+         <p style="font-size: 24px; font-weight: 700; color: var(--accent);">+${expGain}</p>
+       </div>
+       ${botNotice}
+       <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 24px;">
+         <button class="btn btn-primary" id="again" style="background: var(--gradient-hero); color: white; border: none; padding: 14px 24px; font-size: 16px; font-weight: 600; border-radius: var(--radius-md); box-shadow: var(--shadow-md); transition: all var(--transition);">🔄 Ещё раз</button>
+         <button class="btn" id="home" style="background: var(--bg-card); color: var(--text); border: 2px solid var(--border); padding: 14px 24px; font-size: 16px; font-weight: 600; border-radius: var(--radius-md); transition: all var(--transition);">🏠 На главную</button>
+       </div>
+     </div>
+   `, { subpage: true, title: headerTitle });
+ }
+ 
+ /* =======================
+    Утилиты
+ ======================= */
+ const qs=s=>document.querySelector(s);
+ const qsa=s=>[...document.querySelectorAll(s)];
+ function delay(ms){ return new Promise(r=>setTimeout(r,ms)); }
+ function shuffle(a){return a.map(x=>[Math.random(),x]).sort((a,b)=>a[0]-b[0]).map(x=>x[1]);}
+ function toast(t){
+   const el=qs("#toast");
+   if(!el) return;
+   el.innerHTML=`<div class="toast">${t}</div>`;
+   el.style.opacity=1;
+   el.style.transform="translateX(-50%) translateY(0)";
+   setTimeout(()=>{
+     el.style.opacity=0;
+     el.style.transform="translateX(-50%) translateY(20px)";
+   },2500);
+ }
+function esc(s){
+  const base = s == null ? "" : s;
+  return String(base).replace(/[&<>\"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
+}
+ function bindSearch(inputId, targetId){
+   const input = document.getElementById(inputId);
+   if(!input) return;
+   const target = document.getElementById(targetId);
+   if(!target) return;
+   
+   input.addEventListener("input", (e) => {
+     const query = e.target.value.toLowerCase().trim();
+     const items = target.querySelectorAll("[data-search-text]");
+     
+     items.forEach(item => {
+       const searchText = item.getAttribute("data-search-text") || "";
+       if(!query || searchText.includes(query)) {
+         item.style.display = "";
+         item.classList.add("fade-in");
+       } else {
+         item.style.display = "none";
+       }
+     });
+     
+     // Скрываем пустые категории для разметки
+     if(targetId === "markup-list") {
+       const categories = target.querySelectorAll(".markup-category");
+       categories.forEach(cat => {
+         const visibleItems = cat.querySelectorAll("[data-search-text]:not([style*='display: none'])");
+         if(visibleItems.length === 0 && query) {
+           cat.style.display = "none";
+         } else {
+           cat.style.display = "";
+         }
+       });
+     }
+   });
+ }
+
+ function updateStatsCounters(){
+   setStat("statQuestions", State.pool.length);
+   setStat("statTopics", State.topics.size);
+   setStat("statTickets", State.byTicket.size);
+ }
+ function setStat(id, value){
+   const el = qs(`#${id}`);
+   if(!el) return;
+   el.textContent = value ? value.toLocaleString("ru-RU") : "0";
+ }
+ function formatNumber(value){
+   return Number.isFinite(value) ? value.toLocaleString("ru-RU") : "0";
+ }
+ 
+ function clearAdvanceTimer(){
+   if(State.advanceTimer){
+     clearTimeout(State.advanceTimer);
+     State.advanceTimer = null;
+   }
+ }
+ 
+ function notifyDataIssue(){
+   if (State.pool.length) return;
+   toast("⚠️ Не удалось загрузить билеты. Проверьте соединение и обновите страницу.");
+ }
+ 
+ function renderTracker(){
+   const d = State.duel;
+   if(!d) return "";
+   return `
+     <nav class="question-tracker" aria-label="Прогресс вопросов">
+       ${d.q.map((_, idx)=>{
+         const info = d.answers[idx];
+        const status = info && info.status;
+         const classes = ["tracker-dot"];
+         if(idx === d.i) classes.push("is-current");
+         if(status === "correct") classes.push("is-correct");
+         if(status === "wrong") classes.push("is-wrong");
+         const disabled = idx > d.furthest ? "disabled" : "";
+         return `<button type="button" class="${classes.join(" ")}" data-question="${idx}" ${disabled}><span>${idx+1}</span></button>`;
+       }).join("")}
+     </nav>
+   `;
+ }
+ 
+ function renderAnswerButton(text, index, question, answerState){
+   const classes = ["answer"];
+   let disabled = "";
+  if(answerState && answerState.status){
+     disabled = "disabled";
+     if(index === question.correctIndex) classes.push("correct");
+     if(answerState.status === "wrong" && index === answerState.selected) classes.push("wrong");
+   }
+   return `<button class="${classes.join(" ")}" data-i="${index}" ${disabled}>${esc(text)}</button>`;
+ }
+ 
+ function renderQuestionControls(isAnswered){
+   const d = State.duel;
+   if(!d) return "";
+   const atStart = d.i === 0;
+   const atEnd = d.i === d.q.length - 1;
+   const nextLabel = atEnd ? "Завершить" : "Следующий";
+   const nextAttr = atEnd ? "data-finish" : "data-next";
+   const prevBtn = `<button class="btn ghost nav-btn" data-prev ${atStart?"disabled":""}>⬅️ Назад</button>`;
+   const nextBtn = `<button class="btn btn-primary nav-btn" ${nextAttr} ${isAnswered?"":"disabled"}>${nextLabel} ➡️</button>`;
+   return `
+     <div class="question-controls">
+       ${prevBtn}
+       ${nextBtn}
+     </div>
+   `;
+ }
+ 
+ function goToQuestion(index){
+   const d = State.duel;
+   if(!d) return;
+   clearAdvanceTimer();
+   const target = Math.max(0, Math.min(index, d.q.length - 1));
+   if(target > d.furthest) return;
+   renderQuestion(target);
+ }
+ 
+ function nextQuestion(){
+   const d = State.duel;
+   if(!d) return;
+   clearAdvanceTimer();
+   
+   if(d.i >= d.q.length - 1){
+    const current = d.answers[d.i];
+    if(current && current.status){
+       finishDuel();
+     }
+     return;
+   }
+  const activeAnswer = d.answers[d.i];
+  if(!(activeAnswer && activeAnswer.status)) return;
+   const nextIndex = d.i + 1;
+   d.furthest = Math.min(d.q.length - 1, Math.max(d.furthest, nextIndex));
+   
+   // Сохраняем прогресс перед переходом к следующему вопросу
+   if(d.mode === "ticket" && d.ticketLabel) {
+     const answeredCount = d.answers.filter(a => a && a.status).length;
+     const questionOrder = d.q.map((q) => q.question || q.text || JSON.stringify(q));
+     saveTicketProgress(d.ticketLabel, d.me, d.q.length, answeredCount, nextIndex, d.answers, questionOrder);
+   } else if(d.mode === "topic" && d.topic) {
+     const answeredCount = d.answers.filter(a => a && a.status).length;
+     const questionOrder = d.q.map((q) => q.question || q.text || JSON.stringify(q));
+     saveTopicProgress(d.topic, d.me, d.q.length, answeredCount, nextIndex, d.answers, questionOrder);
+   }
+   
+   renderQuestion(nextIndex);
+ }
+ 
+ function previousQuestion(){
+   const d = State.duel;
+   if(!d) return;
+   clearAdvanceTimer();
+   if(d.i <= 0) return;
+   renderQuestion(d.i - 1);
+ }
